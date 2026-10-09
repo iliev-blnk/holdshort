@@ -3,6 +3,121 @@
 use crate::Obs;
 use crate::area::{EARTH_RADIUS_NM, distance_nm};
 
+/// One end of a runway: its threshold, the heading flown when landing on it
+/// (true degrees) and its elevation. From OurAirports `runways.csv` (public domain).
+#[derive(Debug, PartialEq)]
+pub struct RunwayEnd {
+    pub name: &'static str,
+    pub lat: f64,
+    pub lon: f64,
+    pub heading_deg: f64,
+    pub elevation_ft: f64,
+}
+
+const LTFM_RUNWAYS: &[RunwayEnd] = &[
+    RunwayEnd {
+        name: "09",
+        lat: 41.253693,
+        lon: 28.766272,
+        heading_deg: 89.0,
+        elevation_ft: 274.0,
+    },
+    RunwayEnd {
+        name: "27",
+        lat: 41.254063,
+        lon: 28.800018,
+        heading_deg: 269.0,
+        elevation_ft: 274.0,
+    },
+    RunwayEnd {
+        name: "16L",
+        lat: 41.29859924316406,
+        lon: 28.709199905395508,
+        heading_deg: 174.0,
+        elevation_ft: 218.0,
+    },
+    RunwayEnd {
+        name: "34R",
+        lat: 41.26490020751953,
+        lon: 28.70989990234375,
+        heading_deg: 354.0,
+        elevation_ft: 325.0,
+    },
+    RunwayEnd {
+        name: "16R",
+        lat: 41.29859924316406,
+        lon: 28.706750869750977,
+        heading_deg: 174.0,
+        elevation_ft: 218.0,
+    },
+    RunwayEnd {
+        name: "34L",
+        lat: 41.26483917236328,
+        lon: 28.70741081237793,
+        heading_deg: 354.0,
+        elevation_ft: 325.0,
+    },
+    RunwayEnd {
+        name: "17L",
+        lat: 41.298828125,
+        lon: 28.727039337158203,
+        heading_deg: 174.0,
+        elevation_ft: 202.0,
+    },
+    RunwayEnd {
+        name: "35R",
+        lat: 41.26192092895508,
+        lon: 28.727760314941406,
+        heading_deg: 354.0,
+        elevation_ft: 310.0,
+    },
+    RunwayEnd {
+        name: "17R",
+        lat: 41.29880142211914,
+        lon: 28.72450065612793,
+        heading_deg: 174.0,
+        elevation_ft: 202.0,
+    },
+    RunwayEnd {
+        name: "35L",
+        lat: 41.26190185546875,
+        lon: 28.725299835205078,
+        heading_deg: 354.0,
+        elevation_ft: 310.0,
+    },
+    RunwayEnd {
+        name: "18",
+        lat: 41.289798736572266,
+        lon: 28.756200790405273,
+        heading_deg: 179.0,
+        elevation_ft: 221.0,
+    },
+    RunwayEnd {
+        name: "36",
+        lat: 41.26219940185547,
+        lon: 28.75670051574707,
+        heading_deg: 354.0,
+        elevation_ft: 309.0,
+    },
+];
+
+const LRSV_RUNWAYS: &[RunwayEnd] = &[
+    RunwayEnd {
+        name: "16",
+        lat: 47.6952018737793,
+        lon: 26.35059928894043,
+        heading_deg: 163.0,
+        elevation_ft: 1375.0,
+    },
+    RunwayEnd {
+        name: "34",
+        lat: 47.6797981262207,
+        lon: 26.357500076293945,
+        heading_deg: 343.0,
+        elevation_ft: 1330.0,
+    },
+];
+
 #[derive(Debug, PartialEq)]
 pub struct Airport {
     pub icao: &'static str,
@@ -11,6 +126,7 @@ pub struct Airport {
     pub lat: f64,
     pub lon: f64,
     pub radius_nm: f64,
+    pub runways: &'static [RunwayEnd],
 }
 
 pub const LTFM: Airport = Airport {
@@ -19,6 +135,7 @@ pub const LTFM: Airport = Airport {
     lat: 41.2753,
     lon: 28.7519,
     radius_nm: 50.0,
+    runways: LTFM_RUNWAYS,
 };
 
 pub const LRSV: Airport = Airport {
@@ -27,6 +144,7 @@ pub const LRSV: Airport = Airport {
     lat: 47.6875,
     lon: 26.3542,
     radius_nm: 50.0,
+    runways: LRSV_RUNWAYS,
 };
 
 pub const AIRPORTS: &[&Airport] = &[&LTFM, &LRSV];
@@ -117,6 +235,57 @@ mod tests {
             category: None,
             src: Src::Adsblol,
         }
+    }
+
+    /// Parse the OurAirports CSV subset (no embedded commas in these rows).
+    fn csv_ends() -> Vec<(String, String, f64, f64, f64, f64)> {
+        let text = include_str!("../../../fixtures/ourairports_runways.csv");
+        let mut out = Vec::new();
+        for line in text.lines().skip(1) {
+            let c: Vec<String> = line
+                .split(',')
+                .map(|f| f.trim_matches('"').to_string())
+                .collect();
+            let num = |i: usize| c[i].parse::<f64>().unwrap();
+            // le_ident 8, le lat 9, lon 10, elev 11, hdg 12; he_ident 14, lat 15, lon 16, elev 17, hdg 18
+            out.push((
+                c[2].clone(),
+                c[8].clone(),
+                num(9),
+                num(10),
+                num(12),
+                num(11),
+            ));
+            out.push((
+                c[2].clone(),
+                c[14].clone(),
+                num(15),
+                num(16),
+                num(18),
+                num(17),
+            ));
+        }
+        out
+    }
+
+    #[test]
+    fn runways_match_ourairports() {
+        let ends = csv_ends();
+        for (icao, name, lat, lon, hdg, elev) in &ends {
+            let ap = by_icao(icao).unwrap();
+            let r = ap
+                .runways
+                .iter()
+                .find(|r| r.name == name)
+                .unwrap_or_else(|| panic!("{icao} {name}"));
+            assert_eq!(
+                (r.lat, r.lon, r.heading_deg, r.elevation_ft),
+                (*lat, *lon, *hdg, *elev),
+                "{icao} {name}"
+            );
+        }
+        assert_eq!(LTFM.runways.len(), 12);
+        assert_eq!(LRSV.runways.len(), 2);
     }
 
     #[test]
