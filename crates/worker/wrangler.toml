@@ -1,0 +1,20 @@
+name = "holdshort"
+main = "build/worker/shim.mjs"
+compatibility_date = "2026-10-01"
+
+[build]
+command = "command -v worker-build >/dev/null || cargo install -q worker-build@0.8.7; worker-build --release"
+
+[triggers]
+crons = ["* * * * *"]
+
+[durable_objects]
+bindings = [{ name = "INGEST", class_name = "Ingest" }]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Ingest"]
+
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "holdshort"

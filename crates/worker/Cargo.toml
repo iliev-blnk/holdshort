@@ -1,0 +1,15 @@
+[package]
+name = "holdshort-worker"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+holdshort-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+worker = "0.8.7"
+futures-util = { version = "0.3", default-features = false }
