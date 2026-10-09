@@ -1,6 +1,7 @@
 //! Runway-relative geometry in a flat local projection (fine within ~15 km).
 
 pub use holdshort_core::airport::RunwayEnd;
+pub use holdshort_core::area::bearing;
 
 pub const NM_M: f64 = 1852.0;
 pub const FT_M: f64 = 0.3048;
@@ -65,8 +66,8 @@ mod tests {
     #[test]
     fn point_on_extended_centreline() {
         let r = rwy("35L");
-        // 2 nm before the threshold: bearing 174° (heading 354 reversed).
-        let b = 174f64.to_radians();
+        // 2 nm before the threshold: the runway heading reversed.
+        let b = (r.heading_deg + 180.0).to_radians();
         let (lat, lon) = (
             r.lat + (2.0 * NM_M * b.cos()) / 111_195.0,
             r.lon + (2.0 * NM_M * b.sin()) / (111_195.0 * r.lat.to_radians().cos()),
@@ -82,7 +83,8 @@ mod tests {
         let r = rwy("35L");
         let lon = r.lon + 100.0 / (111_195.0 * r.lat.to_radians().cos());
         let l = to_runway(r, r.lat, lon);
-        assert!((l.cross_m - 99.45).abs() < 2.0, "{l:?}");
+        let expect = 100.0 * r.heading_deg.to_radians().cos();
+        assert!((l.cross_m - expect).abs() < 2.0, "{l:?}");
     }
 
     #[test]

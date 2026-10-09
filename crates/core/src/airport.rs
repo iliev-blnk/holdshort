@@ -1,10 +1,16 @@
 //! The airports holdshort records, each a circle around its reference point.
 
 use crate::Obs;
+#[cfg(test)]
+use crate::area::bearing;
 use crate::area::{EARTH_RADIUS_NM, distance_nm};
 
 /// One end of a runway: its threshold, the heading flown when landing on it
-/// (true degrees) and its elevation. From OurAirports `runways.csv` (public domain).
+/// (true degrees) and its elevation. Positions and elevations come from
+/// OurAirports `runways.csv` (public domain). Headings are the true bearing to
+/// the opposite threshold: OurAirports gives LTFM's 16/34, 17/35 and 18/36 as
+/// 174°/354°, about 5° off the line through the thresholds (179.1°/359.1°),
+/// which sent every landing on an R runway to its L twin.
 #[derive(Debug, PartialEq)]
 pub struct RunwayEnd {
     pub name: &'static str,
@@ -19,84 +25,84 @@ const LTFM_RUNWAYS: &[RunwayEnd] = &[
         name: "09",
         lat: 41.253693,
         lon: 28.766272,
-        heading_deg: 89.0,
+        heading_deg: 89.2,
         elevation_ft: 274.0,
     },
     RunwayEnd {
         name: "27",
         lat: 41.254063,
         lon: 28.800018,
-        heading_deg: 269.0,
+        heading_deg: 269.2,
         elevation_ft: 274.0,
     },
     RunwayEnd {
         name: "16L",
         lat: 41.29859924316406,
         lon: 28.709199905395508,
-        heading_deg: 174.0,
+        heading_deg: 179.1,
         elevation_ft: 218.0,
     },
     RunwayEnd {
         name: "34R",
         lat: 41.26490020751953,
         lon: 28.70989990234375,
-        heading_deg: 354.0,
+        heading_deg: 359.1,
         elevation_ft: 325.0,
     },
     RunwayEnd {
         name: "16R",
         lat: 41.29859924316406,
         lon: 28.706750869750977,
-        heading_deg: 174.0,
+        heading_deg: 179.2,
         elevation_ft: 218.0,
     },
     RunwayEnd {
         name: "34L",
         lat: 41.26483917236328,
         lon: 28.70741081237793,
-        heading_deg: 354.0,
+        heading_deg: 359.2,
         elevation_ft: 325.0,
     },
     RunwayEnd {
         name: "17L",
         lat: 41.298828125,
         lon: 28.727039337158203,
-        heading_deg: 174.0,
+        heading_deg: 179.2,
         elevation_ft: 202.0,
     },
     RunwayEnd {
         name: "35R",
         lat: 41.26192092895508,
         lon: 28.727760314941406,
-        heading_deg: 354.0,
+        heading_deg: 359.2,
         elevation_ft: 310.0,
     },
     RunwayEnd {
         name: "17R",
         lat: 41.29880142211914,
         lon: 28.72450065612793,
-        heading_deg: 174.0,
+        heading_deg: 179.1,
         elevation_ft: 202.0,
     },
     RunwayEnd {
         name: "35L",
         lat: 41.26190185546875,
         lon: 28.725299835205078,
-        heading_deg: 354.0,
+        heading_deg: 359.1,
         elevation_ft: 310.0,
     },
     RunwayEnd {
         name: "18",
         lat: 41.289798736572266,
         lon: 28.756200790405273,
-        heading_deg: 179.0,
+        heading_deg: 179.2,
         elevation_ft: 221.0,
     },
     RunwayEnd {
         name: "36",
         lat: 41.26219940185547,
         lon: 28.75670051574707,
-        heading_deg: 354.0,
+        heading_deg: 359.2,
         elevation_ft: 309.0,
     },
 ];
@@ -106,14 +112,14 @@ const LRSV_RUNWAYS: &[RunwayEnd] = &[
         name: "16",
         lat: 47.6952018737793,
         lon: 26.35059928894043,
-        heading_deg: 163.0,
+        heading_deg: 163.2,
         elevation_ft: 1375.0,
     },
     RunwayEnd {
         name: "34",
         lat: 47.6797981262207,
         lon: 26.357500076293945,
-        heading_deg: 343.0,
+        heading_deg: 343.2,
         elevation_ft: 1330.0,
     },
 ];
@@ -269,6 +275,31 @@ mod tests {
     }
 
     #[test]
+    fn headings_follow_the_thresholds() {
+        for ap in AIRPORTS {
+            for pair in ap.runways.chunks(2) {
+                let (a, b) = (&pair[0], &pair[1]);
+                let fwd = bearing(a.lat, a.lon, b.lat, b.lon);
+                assert!(
+                    (a.heading_deg - fwd).abs() < 0.5,
+                    "{} {}: {} vs {fwd}",
+                    ap.icao,
+                    a.name,
+                    a.heading_deg
+                );
+                let back = bearing(b.lat, b.lon, a.lat, a.lon);
+                assert!(
+                    (b.heading_deg - back).abs() < 0.5,
+                    "{} {}: {} vs {back}",
+                    ap.icao,
+                    b.name,
+                    b.heading_deg
+                );
+            }
+        }
+    }
+
+    #[test]
     fn runways_match_ourairports() {
         let ends = csv_ends();
         for (icao, name, lat, lon, hdg, elev) in &ends {
@@ -278,11 +309,14 @@ mod tests {
                 .iter()
                 .find(|r| r.name == name)
                 .unwrap_or_else(|| panic!("{icao} {name}"));
+            // Positions and elevations are OurAirports'; headings are derived
+            // from the thresholds (see `headings_follow_the_thresholds`).
             assert_eq!(
-                (r.lat, r.lon, r.heading_deg, r.elevation_ft),
-                (*lat, *lon, *hdg, *elev),
+                (r.lat, r.lon, r.elevation_ft),
+                (*lat, *lon, *elev),
                 "{icao} {name}"
             );
+            let _ = hdg;
         }
         assert_eq!(LTFM.runways.len(), 12);
         assert_eq!(LRSV.runways.len(), 2);

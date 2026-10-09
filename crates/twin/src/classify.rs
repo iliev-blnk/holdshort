@@ -229,6 +229,32 @@ mod tests {
         assert!(departure_fit(&t, &LTFM, &no_wx()).is_none());
     }
 
+    /// Points on the line through the two real thresholds of 17L/35R,
+    /// `nm` before the 35R threshold: independent of any heading value.
+    fn true_line_35r(t0: i64) -> Vec<holdshort_core::Obs> {
+        let (thr, far) = (rwy("35R"), rwy("17L"));
+        let len_nm = holdshort_core::area::distance_nm(thr.lat, thr.lon, far.lat, far.lon);
+        let trk = crate::geo::bearing(thr.lat, thr.lon, far.lat, far.lon);
+        (0..60)
+            .map(|k| {
+                let nm = 6.0 - k as f64 * 0.09; // 6 nm .. ~0.7 nm out
+                let f = -nm / len_nm;
+                let (lat, lon) = (
+                    thr.lat + f * (far.lat - thr.lat),
+                    thr.lon + f * (far.lon - thr.lon),
+                );
+                let alt = thr.elevation_ft + nm * 1852.0 * 3f64.to_radians().tan() / 0.3048;
+                crate::testkit::point(t0 + k * 5_000, lat, lon, alt, 140.0, trk, -700.0)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn true_centreline_35r() {
+        let fit = arrival_fit(&track(true_line_35r(0)), &LTFM, &no_wx()).expect("arrival");
+        assert_eq!(fit.runway.name, "35R");
+    }
+
     #[test]
     fn parallel_200m_east_is_35r() {
         let t = track(approach(rwy("35R"), 0.0, 10.0, 0));
