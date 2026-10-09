@@ -1,6 +1,7 @@
 //! Pure ingest logic shared by the Cloudflare worker and the native CLI.
 //! No I/O here, so it builds for both native and wasm32.
 
+pub mod area;
 pub mod model;
 
 pub use model::*;
