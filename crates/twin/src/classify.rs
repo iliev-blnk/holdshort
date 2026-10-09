@@ -85,9 +85,11 @@ fn fit(
     for r in ap.runways {
         // The run of points near the runway: from the end (or start) of the
         // flight while lower than 2,000 ft above this runway.
+        // Points without a usable height are skipped, not treated as high.
         let low: Vec<usize> = order
             .iter()
             .copied()
+            .filter(|&i| height(&t.points[i], wx, r).is_some())
             .take_while(|&i| height(&t.points[i], wx, r).is_some_and(|h| h < LOW_FT))
             .collect();
         let edge_ok = low
@@ -132,10 +134,12 @@ pub fn is_overflight(t: &Track, ap: &Airport, wx: &Weather) -> bool {
         .iter()
         .map(|r| r.elevation_ft)
         .fold(f64::INFINITY, f64::min);
-    !t.points.is_empty()
-        && t.points
-            .iter()
-            .all(|p| h_agl(p, wx.at(p.ts_ms), elev).is_some_and(|h| h >= OVERFLIGHT_FT))
+    let heights: Vec<f64> = t
+        .points
+        .iter()
+        .filter_map(|p| h_agl(p, wx.at(p.ts_ms), elev))
+        .collect();
+    !heights.is_empty() && heights.iter().all(|h| *h >= OVERFLIGHT_FT)
 }
 
 /// A departure first seen climbing away from the airport above the low
@@ -143,14 +147,19 @@ pub fn is_overflight(t: &Track, ap: &Airport, wx: &Weather) -> bool {
 /// 300 ft/min, and further from the airport a minute later. Receivers south
 /// of LTFM often only see northbound departures from ~4,000–16,000 ft.
 pub fn departs_seen_high(t: &Track, ap: &Airport, wx: &Weather) -> bool {
-    let Some(first) = t.points.first() else {
-        return false;
-    };
     let elev = ap
         .runways
         .iter()
         .map(|r| r.elevation_ft)
         .fold(f64::INFINITY, f64::min);
+    // The first point with a usable height.
+    let Some(first) = t
+        .points
+        .iter()
+        .find(|p| h_agl(p, wx.at(p.ts_ms), elev).is_some())
+    else {
+        return false;
+    };
     let d = |p: &Obs| holdshort_core::area::distance_nm(ap.lat, ap.lon, p.lat, p.lon);
     let Some(h0) = h_agl(first, wx.at(first.ts_ms), elev) else {
         return false;
@@ -304,6 +313,38 @@ mod tests {
         let t = track(pts);
         assert!(arrival_fit(&t, &LTFM, &no_wx()).is_none());
         assert!(!is_overflight(&t, &LTFM, &no_wx()));
+    }
+
+    fn no_height(p: &mut holdshort_core::Obs) {
+        p.alt_baro_ft = None;
+        p.alt_geom_ft = None;
+    }
+
+    #[test]
+    fn heightless_last_point_does_not_lose_the_arrival() {
+        let mut pts = approach(rwy("35L"), 0.0, 10.0, 0);
+        no_height(pts.last_mut().unwrap());
+        assert_eq!(
+            arrival_fit(&track(pts), &LTFM, &no_wx())
+                .unwrap()
+                .runway
+                .name,
+            "35L"
+        );
+    }
+
+    #[test]
+    fn heightless_point_does_not_spoil_an_overflight() {
+        let mut pts = cruise(36_000, 0);
+        no_height(&mut pts[10]);
+        assert!(is_overflight(&track(pts), &LTFM, &no_wx()));
+    }
+
+    #[test]
+    fn heightless_first_point_does_not_hide_a_high_departure() {
+        let mut t = high_departure();
+        no_height(&mut t.points[0]);
+        assert!(departs_seen_high(&t, &LTFM, &no_wx()));
     }
 
     #[test]
