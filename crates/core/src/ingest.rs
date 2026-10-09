@@ -227,10 +227,7 @@ mod tests {
     #[test]
     fn coverage_counts_windows() {
         let now = T0;
-        let c = coverage(
-            &[now - 1_000, now - 2_000, now - 15_000, now - DAY_MS],
-            now,
-        );
+        let c = coverage(&[now - 1_000, now - 2_000, now - 15_000, now - DAY_MS], now);
         assert_eq!(c.expected, 8640);
         assert_eq!(
             c.captured, 2,
