@@ -1,0 +1,9 @@
+target/
+.wrangler/
+build/
+node_modules/
+*.env
+.env
+.dev.vars
+out/
+.superpowers/

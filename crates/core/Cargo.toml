@@ -1,0 +1,14 @@
+[package]
+name = "holdshort-core"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[lib]
+name = "holdshort_core"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+chrono.workspace = true
