@@ -14,6 +14,8 @@ use crate::geo::from_runway;
 use crate::height::Weather;
 
 const DAY_MS: i64 = 86_400_000;
+/// Longest back-extrapolation from first sight to an estimated liftoff.
+const MAX_LIFTOFF_BACK_MS: i64 = 900_000;
 
 /// One flight's verdict: the columns of `flights.parquet`.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -195,14 +197,19 @@ fn analyse(t: &Track, ap: &'static Airport, wx: &Weather) -> (Flight, Vec<Event>
             .iter()
             .map(|r| r.elevation_ft)
             .fold(f64::INFINITY, f64::min);
+        let h = |p: &Obs| crate::height::h_agl(p, wx.at(p.ts_ms), elev);
+        // Start from the first point that has a height.
+        let seen = t.points.iter().find(|p| h(p).is_some()).unwrap_or(first);
         let later = t
             .points
             .iter()
-            .find(|p| p.ts_ms - first.ts_ms >= 60_000)
+            .find(|p| p.ts_ms - seen.ts_ms >= 60_000)
             .unwrap_or(last);
-        let h0 = crate::height::h_agl(first, wx.at(first.ts_ms), elev);
-        if let (Some(h0), Some(c)) = (h0, climb_fpm(first, later, wx, elev)) {
-            let ms = first.ts_ms - (h0.max(0.0) / (c / 60.0) * 1000.0).round() as i64;
+        if let (Some(h0), Some(c)) = (h(seen), climb_fpm(seen, later, wx, elev)) {
+            // A step climb can be slow where first seen; real climbs to
+            // 20,000 ft take well under 15 minutes.
+            let back = (h0.max(0.0) / (c / 60.0) * 1000.0).round() as i64;
+            let ms = seen.ts_ms - back.min(MAX_LIFTOFF_BACK_MS);
             f.liftoff_ms = Some(ms);
             f.time_low_confidence = true;
             ev.push(event(&f, ms, EventKind::Liftoff, None, None, Some(0.0)));
@@ -320,6 +327,42 @@ mod tests {
         // ~10,700 ft above the field at 2,000 ft/min ≈ 5.4 min before first sight.
         let back = (t0 - f.liftoff_ms.unwrap()) as f64 / 1000.0;
         assert!((back - 321.0).abs() < 10.0, "{back}");
+    }
+
+    fn climbing_from(alt0: f64, fpm: f64, t0: i64) -> Vec<holdshort_core::Obs> {
+        use crate::testkit::legs;
+        let lat = LTFM.lat + 12.0 / 60.0;
+        let mut pts = legs(lat, LTFM.lon, alt0, 300.0, &[(120.0, 0.0)], t0);
+        for (k, p) in pts.iter_mut().enumerate() {
+            let alt = alt0 + fpm * (k as f64 * 5.0 / 60.0);
+            p.alt_baro_ft = Some(alt as i32);
+            p.alt_geom_ft = Some(alt as i32);
+            p.vrate_fpm = Some(fpm as i32);
+        }
+        pts
+    }
+
+    #[test]
+    fn slow_climb_liftoff_is_capped_at_15_min() {
+        let t0 = D + 3_600_000;
+        let day = twin_day(&LTFM, D, climbing_from(19_000.0, 400.0, t0), &[]);
+        let f = &day.flights[0];
+        assert_eq!(f.kind, Kind::Departure);
+        assert_eq!(t0 - f.liftoff_ms.unwrap(), 15 * 60_000);
+        assert!(f.time_low_confidence);
+    }
+
+    #[test]
+    fn high_departure_liftoff_uses_first_point_with_height() {
+        let t0 = D + 3_600_000;
+        let mut pts = climbing_from(11_000.0, 2000.0, t0);
+        pts[0].alt_baro_ft = None;
+        pts[0].alt_geom_ft = None;
+        let day = twin_day(&LTFM, D, pts, &[]);
+        let f = &day.flights[0];
+        // Back from the second point (t0 + 5 s, ~11,167 ft) at 2,000 ft/min.
+        let back = (t0 + 5_000 - f.liftoff_ms.expect("liftoff")) as f64 / 1000.0;
+        assert!((back - 329.0).abs() < 10.0, "{back}");
     }
 
     #[test]
