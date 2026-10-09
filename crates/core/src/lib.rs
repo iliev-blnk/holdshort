@@ -3,6 +3,7 @@
 
 pub mod adsblol;
 pub mod area;
+pub mod ingest;
 pub mod model;
 pub mod opensky;
 
