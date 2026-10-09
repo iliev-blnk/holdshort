@@ -17,6 +17,7 @@ const OVERFLIGHT_FT: f64 = 5_000.0;
 const HIGH_DEP_NM: f64 = 25.0;
 const HIGH_DEP_FT: f64 = 20_000.0;
 const MIN_CLIMB_FPM: f64 = 300.0;
+const MIN_GRADIENT_FT_PER_NM: f64 = 200.0;
 /// A runway margin below this means the runway choice is ambiguous.
 pub const AMBIGUOUS_M: f64 = 60.0;
 
@@ -154,7 +155,10 @@ pub fn departs_seen_high(t: &Track, ap: &Airport, wx: &Weather) -> bool {
     let Some(h0) = h_agl(first, wx.at(first.ts_ms), elev) else {
         return false;
     };
-    if d(first) > HIGH_DEP_NM || h0 >= HIGH_DEP_FT {
+    // An airliner climbs far steeper than 200 ft/nm; anything lower this far
+    // out left another airfield (e.g. Hezarfen, 9 nm SSW).
+    let min_h = (d(first) - 1.0).max(0.0) * MIN_GRADIENT_FT_PER_NM;
+    if d(first) > HIGH_DEP_NM || h0 >= HIGH_DEP_FT || h0 < min_h {
         return false;
     }
     let Some(later) = t.points.iter().find(|p| p.ts_ms - first.ts_ms >= 60_000) else {
@@ -333,6 +337,22 @@ mod tests {
             p.lat += 20.0 / 60.0; // first seen ~32 nm out
         }
         assert!(!departs_seen_high(&far, &LTFM, &no_wx()));
+    }
+
+    /// Spot-check finding: a light aircraft leaving Hezarfen (~9 nm SSW of
+    /// LTFM) at 250 ft and 62 kt was counted as an LTFM departure.
+    #[test]
+    fn low_slow_nearby_airfield_departure_is_not_ltfm() {
+        use crate::testkit::legs;
+        let mut pts = legs(41.1095, 28.5653, 450.0, 150.0, &[(120.0, 0.0)], 0);
+        for (k, p) in pts.iter_mut().enumerate() {
+            let alt = 450.0 + 600.0 * (k as f64 * 5.0 / 60.0);
+            p.alt_baro_ft = Some(alt as i32);
+            p.alt_geom_ft = Some(alt as i32);
+            p.vrate_fpm = Some(600);
+            p.gs_kt = Some(70.0);
+        }
+        assert!(!departs_seen_high(&track(pts), &LTFM, &no_wx()));
     }
 
     #[test]
