@@ -5,6 +5,7 @@ mod compact;
 mod dates;
 mod filter;
 mod history_fetch;
+mod live;
 mod parquet_out;
 mod store;
 mod weather;
@@ -46,6 +47,8 @@ enum Cmd {
         #[arg(long)]
         force: bool,
     },
+    /// Poll live traffic from this machine into the data dir (Ctrl-C to stop).
+    Live,
     /// Fetch LTFM METAR history from the Iowa Mesonet archive.
     MetarHistory { range: String },
 }
@@ -90,6 +93,7 @@ fn run(cli: Cli) -> anyhow::Result<bool> {
                 }
             }
         }
+        Cmd::Live => live::run(std::path::Path::new(&cli.data))?,
         Cmd::MetarHistory { range } => {
             let days = dates::parse_range(&range)?;
             // One IEM request per calendar month in the range.
@@ -112,6 +116,7 @@ fn run(cli: Cli) -> anyhow::Result<bool> {
 }
 
 fn main() -> ExitCode {
+    live::load_env(std::path::Path::new(".env"));
     match run(Cli::parse()) {
         Ok(true) => ExitCode::SUCCESS,
         Ok(false) => ExitCode::FAILURE,

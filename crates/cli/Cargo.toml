@@ -17,7 +17,7 @@ anyhow = "1.0.104"
 clap = { version = "4.6.7", features = ["derive"] }
 flate2 = "1.1.10"
 object_store = "0.14.2"
-reqwest = { version = "0.13.5", features = ["blocking"] }
+reqwest = { version = "0.13.5", features = ["blocking", "form", "json"] }
 tar = "0.4.46"
 tempfile = "3.27.0"
 tokio = { version = "1.53.2", features = ["rt-multi-thread"] }
