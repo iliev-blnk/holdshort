@@ -1,0 +1,27 @@
+[package]
+name = "holdshort"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[[bin]]
+name = "holdshort"
+path = "src/main.rs"
+
+[dependencies]
+holdshort-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+anyhow = "1.0.104"
+clap = { version = "4.6.7", features = ["derive"] }
+flate2 = "1.1.10"
+object_store = { version = "0.14.2", features = ["aws"] }
+reqwest = { version = "0.13.5", features = ["blocking"] }
+tar = "0.4.46"
+tempfile = "3.27.0"
+tokio = { version = "1.53.2", features = ["rt-multi-thread"] }
+arrow = { version = "60.0.0", default-features = false }
+bytes = "1.12.1"
+futures = "0.3"
+parquet = { version = "60.0.0", default-features = false, features = ["arrow", "zstd"] }
