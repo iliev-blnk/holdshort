@@ -92,6 +92,12 @@ pub fn evaluate(flights: &[Flight], wx: &Weather, ap: &Airport, days: usize) -> 
     }
 }
 
+/// The pass/fail thresholds are calibrated for Istanbul (DHMI benchmark,
+/// traffic volume); other airports get the numbers without a verdict.
+pub fn has_benchmark(ap: &Airport) -> bool {
+    ap.icao == "LTFM"
+}
+
 /// The spec's pass/fail checks, in order, with a readable line each.
 pub fn thresholds(r: &Report, dhmi_per_day: f64) -> Vec<(String, bool)> {
     let dev = (r.movements_per_day - dhmi_per_day) / dhmi_per_day * 100.0;
@@ -219,6 +225,13 @@ mod tests {
 
     fn all_pass(r: &Report) -> bool {
         thresholds(r, 1449.0).iter().all(|(_, ok)| *ok)
+    }
+
+    #[test]
+    fn only_ltfm_has_a_benchmark() {
+        use holdshort_core::airport::{LRSV, LTFM};
+        assert!(has_benchmark(&LTFM));
+        assert!(!has_benchmark(&LRSV));
     }
 
     #[test]

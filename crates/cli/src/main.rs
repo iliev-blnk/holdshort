@@ -175,8 +175,14 @@ fn run(cli: Cli) -> anyhow::Result<bool> {
                     flights.len()
                 );
                 for (line, ok) in check::thresholds(&rep, dhmi) {
-                    all_ok &= ok;
-                    println!("  [{}] {line}", if ok { "PASS" } else { "FAIL" });
+                    if check::has_benchmark(a) {
+                        all_ok &= ok;
+                        println!("  [{}] {line}", if ok { "PASS" } else { "FAIL" });
+                    } else {
+                        // No benchmark for this airport: report, don't judge.
+                        let line = line.split(" vs DHMI").next().unwrap_or(&line);
+                        println!("  [info] {}", line.split(" (").next().unwrap_or(line));
+                    }
                 }
                 for i in check::sample_indices(sample, flights.len(), seed) {
                     check::print_sample(&flights[i], &obs);
