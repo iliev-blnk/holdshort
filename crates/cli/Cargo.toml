@@ -10,6 +10,7 @@ path = "src/main.rs"
 
 [dependencies]
 holdshort-core.workspace = true
+holdshort-twin.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 chrono.workspace = true

@@ -6,8 +6,9 @@ mod dates;
 mod filter;
 mod history_fetch;
 mod live;
-mod parquet_out;
+mod parquet_io;
 mod store;
+mod twin;
 mod weather;
 
 use std::process::ExitCode;
@@ -52,6 +53,8 @@ enum Cmd {
     },
     /// Poll live traffic from this machine into the data dir (Ctrl-C to stop).
     Live,
+    /// Turn compacted days into flights, events and runway bins.
+    Twin { range: String },
     /// Fetch METAR history from the Iowa Mesonet archive.
     MetarHistory { range: String },
 }
@@ -115,6 +118,20 @@ fn run(cli: Cli) -> anyhow::Result<bool> {
                             s.polls,
                             s.live_chunks,
                             if s.had_history { "yes" } else { "no" }
+                        )
+                    });
+                    report(format!("{} {day}", a.icao), r);
+                }
+            }
+        }
+        Cmd::Twin { range } => {
+            for day in dates::parse_range(&range)? {
+                for a in &airports {
+                    let r = twin::run_day(&store, a, day).map(|s| {
+                        format!(
+                            "{} flights ({} arr, {} dep, {} both, {} other, {} overflights), {} go-arounds, {} holds, {} config changes",
+                            s.flights, s.arrivals, s.departures, s.both, s.other, s.overflights,
+                            s.go_arounds, s.holds, s.config_changes
                         )
                     });
                     report(format!("{} {day}", a.icao), r);

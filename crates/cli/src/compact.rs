@@ -10,7 +10,7 @@ use holdshort_core::airport::Airport;
 use holdshort_core::{Line, Metar, Obs, Poll, from_ndjson};
 
 use crate::backfill::history_key;
-use crate::parquet_out::{obs_parquet, polls_parquet};
+use crate::parquet_io::{obs_parquet, polls_parquet};
 use crate::store::Store;
 use crate::weather::store_metars;
 
