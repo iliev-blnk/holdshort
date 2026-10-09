@@ -1,26 +1,18 @@
-//! Blocking wrapper over `object_store`: R2 (S3 API), a local dir, or memory.
+//! Blocking wrapper over `object_store`: the local data dir, or memory in tests.
 
 use std::sync::Arc;
 
-use anyhow::Context;
 use futures::TryStreamExt;
-use object_store::aws::AmazonS3Builder;
 use object_store::local::LocalFileSystem;
 use object_store::path::Path;
 use object_store::{ObjectStore, ObjectStoreExt, PutPayload};
 use tokio::runtime::Runtime;
-
-pub const BUCKET: &str = "holdshort";
 
 /// Object storage with blocking calls; owns a small tokio runtime because
 /// `object_store` is async while the rest of the CLI is plain blocking code.
 pub struct Store {
     inner: Arc<dyn ObjectStore>,
     rt: Runtime,
-}
-
-fn env(name: &str) -> anyhow::Result<String> {
-    std::env::var(name).with_context(|| format!("missing env var {name}"))
 }
 
 impl Store {
@@ -32,22 +24,7 @@ impl Store {
         Self { inner, rt }
     }
 
-    /// Cloudflare R2 from `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`.
-    pub fn from_env() -> anyhow::Result<Self> {
-        let s3 = AmazonS3Builder::new()
-            .with_endpoint(format!(
-                "https://{}.r2.cloudflarestorage.com",
-                env("R2_ACCOUNT_ID")?
-            ))
-            .with_region("auto")
-            .with_bucket_name(BUCKET)
-            .with_access_key_id(env("R2_ACCESS_KEY_ID")?)
-            .with_secret_access_key(env("R2_SECRET_ACCESS_KEY")?)
-            .build()?;
-        Ok(Self::new(Arc::new(s3)))
-    }
-
-    /// Keys as files under `root` (for `--dry-run`).
+    /// Keys as files under `root` (`raw/history/...`, `parquet/...`).
     pub fn local(root: &str) -> anyhow::Result<Self> {
         std::fs::create_dir_all(root)?;
         Ok(Self::new(Arc::new(LocalFileSystem::new_with_prefix(root)?)))

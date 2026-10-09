@@ -78,11 +78,15 @@ fn live_keys(store: &Store, day: NaiveDate) -> anyhow::Result<Vec<String>> {
         .list(&format!("raw/live/{day}/"))?
         .into_iter()
         .collect();
+    // The next day's first slot (all its parts) can hold this day's last seconds.
     let next = day.succ_opt().expect("date in range");
-    let straggler = format!("raw/live/{next}/0000.ndjson");
-    if store.exists(&straggler)? {
-        keys.insert(straggler);
-    }
+    let first_slot = format!("raw/live/{next}/0000");
+    keys.extend(
+        store
+            .list(&format!("raw/live/{next}/"))?
+            .into_iter()
+            .filter(|k| k.starts_with(&first_slot)),
+    );
     Ok(keys.into_iter().collect())
 }
 
@@ -245,6 +249,26 @@ mod tests {
         assert_eq!(m.obs.len(), 1);
         assert_eq!(m.obs[0].hex, "aaaaaa");
         assert_eq!(m.polls.len(), 1, "polls are also cut to the day");
+    }
+
+    #[test]
+    fn straggler_parts_included() {
+        let store = Store::memory();
+        for k in [
+            "2026-10-09/0000.ndjson",
+            "2026-10-09/0000-1.ndjson",
+            "2026-10-09/0005.ndjson",
+        ] {
+            store.put(&format!("raw/live/{k}"), b"".to_vec()).unwrap();
+        }
+        let keys = live_keys(&store, day()).unwrap();
+        assert_eq!(
+            keys,
+            vec![
+                "raw/live/2026-10-09/0000-1.ndjson",
+                "raw/live/2026-10-09/0000.ndjson"
+            ]
+        );
     }
 
     #[test]

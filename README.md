@@ -3,8 +3,8 @@
 A live digital twin of Istanbul Airport (LTFM) airspace, built from open ADS-B data.
 
 This repository is sub-project 1 of 6: **ingest**. It collects every aircraft position within
-50 nm of LTFM, around the clock, into Cloudflare R2, backfills history from the adsb.lol daily
-archive, and compacts each day to Parquet alongside METAR weather. Later sub-projects build the
+50 nm of LTFM around the clock, backfills history from the adsb.lol daily archive, and compacts
+each day to Parquet alongside METAR weather. Later sub-projects build the
 twin engine, console and forecasting research on top of this data.
 
 Live status: `/health` on the deployed worker (link added after deploy).
@@ -20,19 +20,24 @@ Live status: `/health` on the deployed worker (link added after deploy).
                                        └────────────┬─────────────┘
                                                     │ 5-min NDJSON chunks
                                                     ▼
- adsb.lol globe_history (GitHub, ~4 GB/day) ──► R2 bucket "holdshort" ◄── Iowa Mesonet METAR
-          holdshort backfill (local CLI)          raw/live/…   raw/history/…
-                                                  parquet/date=…/obs.parquet
-                                                  weather/LTFM/YYYY-MM.ndjson
+                                             D1 table "chunks"
+                                                    │ holdshort pull
+                                                    ▼
+ adsb.lol globe_history (GitHub, ~4 GB/day) ──► local data/ ◄── Iowa Mesonet METAR
+          holdshort backfill                  raw/live/…   raw/history/…
+                                              parquet/date=…/obs.parquet
+                                              weather/LTFM/YYYY-MM.ndjson
 ```
 
 - `crates/core`: all rules as pure Rust with no I/O (record types, feed parsers, the 50 nm area
   filter, failover, chunk slots, coverage). It builds for both native and `wasm32`.
-- `crates/worker`: the Cloudflare Worker. One SQLite-backed Durable Object polls on an alarm,
-  buffers rows, and flushes finished 5-minute slots to R2. A cron trigger every minute restarts
-  the loop if the alarm was ever lost.
+- `crates/worker`: the Cloudflare Worker. One SQLite-backed Durable Object polls on a fixed
+  10 s alarm grid, buffers one row per poll, and flushes finished 5-minute slots to D1. A cron
+  trigger every minute restarts the loop if the alarm was ever lost. It is built to stay inside
+  the free plan: about 35k SQLite rows written and 2M read per day.
 - `crates/backfill`: the `holdshort` CLI. It streams a day's history tar from GitHub, never
-  writing the 4 GB to disk, keeps the LTFM area, and uploads one gzip NDJSON file per day.
+  writing the 4 GB to disk, keeps the LTFM area, and writes one gzip NDJSON file per day.
+  `pull` copies the worker's chunks from D1; `compact` turns a day into Parquet.
 
 Failover: after two failed adsb.lol polls the worker switches to OpenSky (30 s interval) and
 retries adsb.lol every 10 minutes. Every poll writes a status row, so gaps are recorded as data
@@ -54,11 +59,12 @@ Units are aviation units: feet, knots, feet per minute.
 
 ```sh
 cargo build --release -p holdshort
-export R2_ACCOUNT_ID=… R2_ACCESS_KEY_ID=… R2_SECRET_ACCESS_KEY=…
+export CLOUDFLARE_ACCOUNT_ID=… CLOUDFLARE_API_TOKEN=…   # D1 read, only for `pull`
 
 holdshort metar-history 2026-09-01..2026-09-30
-holdshort backfill      2026-09-01..2026-09-30   # skips days already in R2; --force to redo
-holdshort compact       2026-09-01..2026-09-30
+holdshort backfill      2026-09-01..2026-09-30   # skips days already present; --force to redo
+holdshort pull          2026-10-09               # live chunks from D1
+holdshort compact       2026-09-01..2026-09-30   # --data <dir> to change the data dir (default ./data)
 ```
 
 ## Worker
@@ -66,6 +72,7 @@ holdshort compact       2026-09-01..2026-09-30
 ```sh
 cd crates/worker
 pnpm install
+pnpm exec wrangler d1 migrations apply holdshort --remote
 pnpm exec wrangler dev --test-scheduled   # OpenSky credentials in .dev.vars
 pnpm exec wrangler deploy
 ```

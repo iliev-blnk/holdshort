@@ -2,10 +2,12 @@
 
 mod backfill;
 mod compact;
+mod d1;
 mod dates;
 mod filter;
 mod history_fetch;
 mod parquet_out;
+mod pull;
 mod store;
 mod weather;
 
@@ -23,16 +25,16 @@ pub const UA: &str = "holdshort/0.1 (+https://github.com/iliev-blnk/holdshort)";
 #[derive(Parser)]
 #[command(name = "holdshort", about = "IST airspace ingest tools")]
 struct Cli {
-    /// Write to ./out instead of R2.
-    #[arg(long, global = true, hide = true)]
-    dry_run: bool,
+    /// Local data directory (history, live chunks, Parquet, weather).
+    #[arg(long, global = true, default_value = "data")]
+    data: String,
     #[command(subcommand)]
     cmd: Cmd,
 }
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Stream adsb.lol history tars, keep the LTFM area, upload to R2.
+    /// Stream adsb.lol history tars and keep the LTFM area.
     Backfill {
         /// A date (2026-10-08) or an inclusive range (2026-09-01..2026-09-30).
         range: String,
@@ -46,16 +48,14 @@ enum Cmd {
         #[arg(long)]
         force: bool,
     },
+    /// Copy live chunks the worker flushed to D1 into the data dir.
+    Pull { range: String },
     /// Fetch LTFM METAR history from the Iowa Mesonet archive.
     MetarHistory { range: String },
 }
 
 fn run(cli: Cli) -> anyhow::Result<bool> {
-    let store = if cli.dry_run {
-        Store::local("out")?
-    } else {
-        Store::from_env()?
-    };
+    let store = Store::local(&cli.data)?;
     let mut all_ok = true;
     match cli.cmd {
         Cmd::Backfill { range, force } => {
@@ -87,6 +87,18 @@ fn run(cli: Cli) -> anyhow::Result<bool> {
                         s.live_chunks,
                         if s.had_history { "yes" } else { "no" }
                     ),
+                    Err(e) => {
+                        all_ok = false;
+                        println!("{day} FAILED: {e:#}");
+                    }
+                }
+            }
+        }
+        Cmd::Pull { range } => {
+            let db = d1::D1::from_env()?;
+            for day in dates::parse_range(&range)? {
+                match pull::pull_day(&store, day, |from, to| db.chunks_between(from, to)) {
+                    Ok(n) => println!("{day} ok: {n} new chunks"),
                     Err(e) => {
                         all_ok = false;
                         println!("{day} FAILED: {e:#}");
