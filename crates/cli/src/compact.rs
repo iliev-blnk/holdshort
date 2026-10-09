@@ -6,6 +6,7 @@ use std::io::Read;
 use anyhow::bail;
 use chrono::NaiveDate;
 use flate2::read::GzDecoder;
+use holdshort_core::airport::Airport;
 use holdshort_core::{Line, Metar, Obs, Poll, from_ndjson};
 
 use crate::backfill::history_key;
@@ -73,33 +74,39 @@ pub fn merge_day(day: NaiveDate, history: Vec<Obs>, live: Vec<Line>) -> MergedDa
     MergedDay { obs, polls, metars }
 }
 
-fn live_keys(store: &Store, day: NaiveDate) -> anyhow::Result<Vec<String>> {
+fn live_keys(store: &Store, airport: &Airport, day: NaiveDate) -> anyhow::Result<Vec<String>> {
+    let icao = airport.icao;
     let mut keys: BTreeSet<String> = store
-        .list(&format!("raw/live/{day}/"))?
+        .list(&format!("{icao}/raw/live/{day}/"))?
         .into_iter()
         .collect();
     // The next day's first slot (all its parts) can hold this day's last seconds.
     let next = day.succ_opt().expect("date in range");
-    let first_slot = format!("raw/live/{next}/0000");
+    let first_slot = format!("{icao}/raw/live/{next}/0000");
     keys.extend(
         store
-            .list(&format!("raw/live/{next}/"))?
+            .list(&format!("{icao}/raw/live/{next}/"))?
             .into_iter()
             .filter(|k| k.starts_with(&first_slot)),
     );
     Ok(keys.into_iter().collect())
 }
 
-pub fn obs_key(day: NaiveDate) -> String {
-    format!("parquet/date={day}/obs.parquet")
+pub fn obs_key(airport: &Airport, day: NaiveDate) -> String {
+    format!("{}/parquet/date={day}/obs.parquet", airport.icao)
 }
 
 /// Compact one day into Parquet and merge its METAR into the monthly file.
-pub fn compact_day(store: &Store, day: NaiveDate, force: bool) -> anyhow::Result<CompactStats> {
-    if !force && store.exists(&obs_key(day))? {
+pub fn compact_day(
+    store: &Store,
+    airport: &Airport,
+    day: NaiveDate,
+    force: bool,
+) -> anyhow::Result<CompactStats> {
+    if !force && store.exists(&obs_key(airport, day))? {
         bail!("{day} already compacted (use --force)");
     }
-    let hkey = history_key(day);
+    let hkey = history_key(airport, day);
     let had_history = store.exists(&hkey)?;
     let history: Vec<Obs> = if had_history {
         let mut text = String::new();
@@ -114,7 +121,7 @@ pub fn compact_day(store: &Store, day: NaiveDate, force: bool) -> anyhow::Result
     } else {
         Vec::new()
     };
-    let keys = live_keys(store, day)?;
+    let keys = live_keys(store, airport, day)?;
     if !had_history && keys.is_empty() {
         bail!("no data for {day}");
     }
@@ -123,12 +130,12 @@ pub fn compact_day(store: &Store, day: NaiveDate, force: bool) -> anyhow::Result
         live.extend(from_ndjson(&String::from_utf8(store.get(k)?)?)?);
     }
     let merged = merge_day(day, history, live);
-    store.put(&obs_key(day), obs_parquet(&merged.obs)?)?;
+    store.put(&obs_key(airport, day), obs_parquet(&merged.obs)?)?;
     store.put(
-        &format!("parquet/date={day}/polls.parquet"),
+        &format!("{}/parquet/date={day}/polls.parquet", airport.icao),
         polls_parquet(&merged.polls)?,
     )?;
-    store_metars(store, merged.metars)?;
+    store_metars(store, airport, merged.metars)?;
     Ok(CompactStats {
         obs: merged.obs.len(),
         polls: merged.polls.len(),
@@ -141,6 +148,7 @@ pub fn compact_day(store: &Store, day: NaiveDate, force: bool) -> anyhow::Result
 mod tests {
     use super::*;
     use crate::store::Store;
+    use holdshort_core::airport::LTFM;
     use holdshort_core::{Src, to_ndjson};
 
     const D0: i64 = 1_791_417_600_000; // 2026-10-08 00:00 UTC
@@ -259,14 +267,16 @@ mod tests {
             "2026-10-09/0000-1.ndjson",
             "2026-10-09/0005.ndjson",
         ] {
-            store.put(&format!("raw/live/{k}"), b"".to_vec()).unwrap();
+            store
+                .put(&format!("LTFM/raw/live/{k}"), b"".to_vec())
+                .unwrap();
         }
-        let keys = live_keys(&store, day()).unwrap();
+        let keys = live_keys(&store, &LTFM, day()).unwrap();
         assert_eq!(
             keys,
             vec![
-                "raw/live/2026-10-09/0000-1.ndjson",
-                "raw/live/2026-10-09/0000.ndjson"
+                "LTFM/raw/live/2026-10-09/0000-1.ndjson",
+                "LTFM/raw/live/2026-10-09/0000.ndjson"
             ]
         );
     }
@@ -274,7 +284,9 @@ mod tests {
     #[test]
     fn compact_without_sources_errors() {
         let store = Store::memory();
-        let err = compact_day(&store, day(), false).unwrap_err().to_string();
+        let err = compact_day(&store, &LTFM, day(), false)
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("no data for 2026-10-08"), "{err}");
     }
 
@@ -291,22 +303,29 @@ mod tests {
             }),
         ]);
         store
-            .put("raw/live/2026-10-08/1100.ndjson", live.into_bytes())
+            .put("LTFM/raw/live/2026-10-08/1100.ndjson", live.into_bytes())
             .unwrap();
         let straggler = to_ndjson(&[Line::Obs(obs("cccccc", D0 + 24 * H - 1_000, Src::Adsblol))]);
         store
-            .put("raw/live/2026-10-09/0000.ndjson", straggler.into_bytes())
+            .put(
+                "LTFM/raw/live/2026-10-09/0000.ndjson",
+                straggler.into_bytes(),
+            )
             .unwrap();
-        let stats = compact_day(&store, day(), false).unwrap();
+        let stats = compact_day(&store, &LTFM, day(), false).unwrap();
         assert_eq!(stats.obs, 2);
         assert_eq!(stats.polls, 1);
-        assert!(store.exists("parquet/date=2026-10-08/obs.parquet").unwrap());
         assert!(
             store
-                .exists("parquet/date=2026-10-08/polls.parquet")
+                .exists("LTFM/parquet/date=2026-10-08/obs.parquet")
                 .unwrap()
         );
-        let weather = String::from_utf8(store.get("weather/LTFM/2026-10.ndjson").unwrap()).unwrap();
+        assert!(
+            store
+                .exists("LTFM/parquet/date=2026-10-08/polls.parquet")
+                .unwrap()
+        );
+        let weather = String::from_utf8(store.get("LTFM/weather/2026-10.ndjson").unwrap()).unwrap();
         assert!(weather.contains("LTFM X"));
     }
 }

@@ -6,9 +6,6 @@ use serde_json::Value;
 use crate::adsblol::clean;
 use crate::{Error, Obs, Src};
 
-/// (lamin, lomin, lamax, lomax): a box around the 50 nm circle.
-pub const BBOX: (f64, f64, f64, f64) = (40.43, 27.64, 42.12, 29.86);
-
 const M_TO_FT: f64 = 3.28084;
 const MS_TO_KT: f64 = 1.943844;
 const MS_TO_FPM: f64 = 196.8504;
@@ -137,15 +134,5 @@ mod tests {
             .as_i64()
             .unwrap();
         assert!(!parse(REAL, time * 1000).unwrap().is_empty());
-    }
-
-    #[test]
-    fn bbox_covers_circle() {
-        use crate::area::{EARTH_RADIUS_NM, LTFM_LAT, LTFM_LON, RADIUS_NM};
-        let dlat = (RADIUS_NM / EARTH_RADIUS_NM).to_degrees();
-        let dlon = dlat / LTFM_LAT.to_radians().cos();
-        let (lamin, lomin, lamax, lomax) = BBOX;
-        assert!(lamin <= LTFM_LAT - dlat && lamax >= LTFM_LAT + dlat);
-        assert!(lomin <= LTFM_LON - dlon && lomax >= LTFM_LON + dlon);
     }
 }

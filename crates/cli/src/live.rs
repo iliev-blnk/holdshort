@@ -1,28 +1,28 @@
-//! `holdshort live`: poll adsb.lol (OpenSky fallback) on a 10 s grid from
-//! this machine and append to `data/raw/live/YYYY-MM-DD/HHMM.ndjson`.
+//! `holdshort live`: poll adsb.lol (OpenSky fallback) for each airport on a
+//! 10 s grid from this machine, appending to
+//! `data/<ICAO>/raw/live/YYYY-MM-DD/HHMM.ndjson`.
 
 use std::io::Write;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use holdshort_core::area::retain_in_area;
-use holdshort_core::ingest::{IngestState, chunk_key, next_poll_ms, slot_of};
+use holdshort_core::airport::Airport;
+use holdshort_core::ingest::{IngestState, POLL_MS, chunk_key, next_poll_ms, slot_of};
 use holdshort_core::{Line, Poll, Src, adsblol, metar, opensky, to_ndjson};
 use serde::Deserialize;
 
 use crate::UA;
 
-const ADSBLOL_URL: &str = "https://api.adsb.lol/v2/point/41.2753/28.7519/50";
-const AWC_URL: &str = "https://aviationweather.gov/api/data/metar?ids=LTFM&format=json&hours=1";
 const TOKEN_URL: &str =
     "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token";
 
-/// One poll: pick the feed, fetch, parse, keep the area, and record the
-/// outcome. Returns the NDJSON lines to append (positions, one status line,
-/// and METAR reports when due). Network calls are passed in so the rules
-/// can be tested without the network.
+/// One poll for one airport: pick the feed, fetch, parse, keep the airport's
+/// circle, and record the outcome. Returns the NDJSON lines to append
+/// (positions, one status line, and METAR reports when due). Network calls
+/// are passed in so the rules can be tested without the network.
 pub fn poll_once(
     st: &mut IngestState,
+    airport: &Airport,
     now: i64,
     mut fetch: impl FnMut(Src) -> Result<String, String>,
     mut fetch_metar: impl FnMut() -> Result<String, String>,
@@ -40,7 +40,7 @@ pub fn poll_once(
     let mut lines = Vec::new();
     let poll = match result {
         Ok(mut obs) => {
-            retain_in_area(&mut obs);
+            airport.retain(&mut obs);
             let count = obs.len() as u32;
             lines.extend(obs.into_iter().map(Line::Obs));
             Poll {
@@ -74,9 +74,14 @@ pub fn poll_once(
     lines
 }
 
-/// Append lines to the slot's chunk file under `root`.
-pub fn append_lines(root: &Path, slot_ms: i64, lines: &[Line]) -> std::io::Result<()> {
-    let path = root.join(chunk_key(slot_ms));
+/// Append lines to the airport's chunk file for the slot under `root`.
+pub fn append_lines(
+    root: &Path,
+    airport: &Airport,
+    slot_ms: i64,
+    lines: &[Line],
+) -> std::io::Result<()> {
+    let path = root.join(airport.icao).join(chunk_key(slot_ms));
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
@@ -168,12 +173,15 @@ impl OpenSky {
         Ok(Some(resp.access_token))
     }
 
-    fn fetch(&mut self, client: &reqwest::blocking::Client, now: i64) -> Result<String, String> {
-        let (lamin, lomin, lamax, lomax) = opensky::BBOX;
-        let url = format!(
-            "https://opensky-network.org/api/states/all?lamin={lamin}&lomin={lomin}&lamax={lamax}&lomax={lomax}"
-        );
-        let mut req = client.get(url).timeout(Duration::from_secs(10));
+    fn fetch(
+        &mut self,
+        client: &reqwest::blocking::Client,
+        airport: &Airport,
+        now: i64,
+    ) -> Result<String, String> {
+        let mut req = client
+            .get(airport.opensky_url())
+            .timeout(Duration::from_secs(10));
         if let Some(t) = self.bearer(client, now)? {
             req = req.bearer_auth(t);
         }
@@ -197,16 +205,41 @@ fn now_ms() -> i64 {
         .as_millis() as i64
 }
 
-/// Poll forever (Ctrl-C to stop). Prints one summary line per 5-min slot.
-pub fn run(root: &Path) -> anyhow::Result<()> {
+/// Poll state for one airport.
+struct Feed {
+    airport: &'static Airport,
+    st: IngestState,
+    next_ms: i64,
+    slot: i64,
+    polls: u32,
+    ok: u32,
+    last_count: u32,
+}
+
+/// Poll every airport forever (Ctrl-C to stop). Prints one summary line per
+/// airport per 5-min slot.
+pub fn run(root: &Path, airports: &[&'static Airport]) -> anyhow::Result<()> {
     let client = reqwest::blocking::Client::builder()
         .user_agent(UA)
         .build()?;
     let mut opensky = OpenSky::from_env();
-    let mut st = IngestState::default();
-    let (mut slot, mut polls, mut ok, mut last_count) = (0, 0, 0, 0);
+    let start = now_ms();
+    let mut feeds: Vec<Feed> = airports
+        .iter()
+        .map(|&airport| Feed {
+            airport,
+            st: IngestState::default(),
+            next_ms: next_poll_ms(start, POLL_MS),
+            slot: 0,
+            polls: 0,
+            ok: 0,
+            last_count: 0,
+        })
+        .collect();
+    let names: Vec<&str> = airports.iter().map(|a| a.icao).collect();
     println!(
-        "polling into {} (OpenSky fallback: {})",
+        "polling {} into {} (OpenSky fallback: {})",
+        names.join(", "),
         root.display(),
         if opensky.creds.is_some() {
             "authenticated"
@@ -215,44 +248,64 @@ pub fn run(root: &Path) -> anyhow::Result<()> {
         }
     );
     loop {
-        let now = now_ms();
-        let wait = next_poll_ms(now, st.interval_ms()) - now;
+        let next = feeds
+            .iter()
+            .map(|f| f.next_ms)
+            .min()
+            .expect("at least one airport");
+        let wait = next - now_ms();
         std::thread::sleep(Duration::from_millis(wait.max(0) as u64));
-        let now = now_ms();
-        let lines = poll_once(
-            &mut st,
-            now,
-            |src| match src {
-                Src::Adsblol => get(client.get(ADSBLOL_URL).timeout(Duration::from_secs(5))),
-                _ => opensky.fetch(&client, now),
-            },
-            || get(client.get(AWC_URL).timeout(Duration::from_secs(10))),
-        );
-        for l in &lines {
-            if let Line::Poll(p) = l {
-                polls += 1;
-                if p.ok {
-                    ok += 1;
-                    last_count = p.count;
-                } else {
-                    eprintln!(
-                        "{:?} poll failed: {}",
-                        p.src,
-                        p.error.as_deref().unwrap_or("?")
-                    );
+        for f in feeds.iter_mut().filter(|f| f.next_ms <= next) {
+            let now = now_ms();
+            let airport = f.airport;
+            let lines = poll_once(
+                &mut f.st,
+                airport,
+                now,
+                |src| match src {
+                    Src::Adsblol => get(client
+                        .get(airport.adsblol_url())
+                        .timeout(Duration::from_secs(5))),
+                    _ => opensky.fetch(&client, airport, now),
+                },
+                || {
+                    get(client
+                        .get(airport.awc_url())
+                        .timeout(Duration::from_secs(10)))
+                },
+            );
+            for l in &lines {
+                if let Line::Poll(p) = l {
+                    f.polls += 1;
+                    if p.ok {
+                        f.ok += 1;
+                        f.last_count = p.count;
+                    } else {
+                        eprintln!(
+                            "{} {:?} poll failed: {}",
+                            airport.icao,
+                            p.src,
+                            p.error.as_deref().unwrap_or("?")
+                        );
+                    }
                 }
             }
-        }
-        append_lines(root, slot_of(now), &lines)?;
-        if slot_of(now) != slot {
-            if slot != 0 {
-                println!(
-                    "{}: {ok}/{polls} polls ok, {last_count} aircraft, source {:?}",
-                    chunk_key(slot),
-                    st.source
-                );
+            append_lines(root, airport, slot_of(now), &lines)?;
+            if slot_of(now) != f.slot {
+                if f.slot != 0 {
+                    println!(
+                        "{} {}: {}/{} polls ok, {} aircraft, source {:?}",
+                        airport.icao,
+                        chunk_key(f.slot),
+                        f.ok,
+                        f.polls,
+                        f.last_count,
+                        f.st.source
+                    );
+                }
+                (f.slot, f.polls, f.ok) = (slot_of(now), 0, 0);
             }
-            (slot, polls, ok) = (slot_of(now), 0, 0);
+            f.next_ms = next_poll_ms(now, f.st.interval_ms());
         }
     }
 }
@@ -260,6 +313,7 @@ pub fn run(root: &Path) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use holdshort_core::airport::{LRSV, LTFM};
     use holdshort_core::{Line, Src, from_ndjson};
 
     const NOW: i64 = 1_791_561_733_502;
@@ -284,6 +338,7 @@ mod tests {
         let mut st = IngestState::default();
         let lines = poll_once(
             &mut st,
+            &LTFM,
             NOW,
             |_| Ok(SMALL.to_string()),
             || Ok(AWC.to_string()),
@@ -304,6 +359,7 @@ mod tests {
         };
         let lines = poll_once(
             &mut st,
+            &LTFM,
             NOW,
             |_| Ok(SMALL.to_string()),
             || panic!("not due"),
@@ -321,6 +377,7 @@ mod tests {
         for i in 0..3 {
             let lines = poll_once(
                 &mut st,
+                &LTFM,
                 NOW + i * 10_000,
                 |src| {
                     asked.push(src);
@@ -341,7 +398,13 @@ mod tests {
             last_metar_ms: NOW,
             ..IngestState::default()
         };
-        let lines = poll_once(&mut st, NOW, |_| Ok("{}".to_string()), || unreachable!());
+        let lines = poll_once(
+            &mut st,
+            &LTFM,
+            NOW,
+            |_| Ok("{}".to_string()),
+            || unreachable!(),
+        );
         assert!(!count(&lines).1[0].ok);
         assert_eq!(st.primary_failures, 1);
     }
@@ -351,12 +414,32 @@ mod tests {
         let mut st = IngestState::default();
         let lines = poll_once(
             &mut st,
+            &LTFM,
             NOW,
             |_| Ok(SMALL.to_string()),
             || Err("timeout".into()),
         );
         assert_eq!(count(&lines).2, 0);
         assert_eq!(st.last_metar_ms, NOW);
+    }
+
+    #[test]
+    fn suceava_poll_keeps_only_suceava() {
+        let mut st = IngestState {
+            last_metar_ms: NOW,
+            ..IngestState::default()
+        };
+        // The small fixture is all around Istanbul.
+        let lines = poll_once(
+            &mut st,
+            &LRSV,
+            NOW,
+            |_| Ok(SMALL.to_string()),
+            || unreachable!(),
+        );
+        let (obs, polls, _) = count(&lines);
+        assert_eq!(obs, 0);
+        assert!(polls[0].ok);
     }
 
     #[test]
@@ -373,10 +456,10 @@ mod tests {
                 error: None,
             })]
         };
-        append_lines(dir.path(), slot, &poll(1)).unwrap();
-        append_lines(dir.path(), slot, &poll(2)).unwrap();
-        let text =
-            std::fs::read_to_string(dir.path().join("raw/live/2026-10-09/1600.ndjson")).unwrap();
+        append_lines(dir.path(), &LRSV, slot, &poll(1)).unwrap();
+        append_lines(dir.path(), &LRSV, slot, &poll(2)).unwrap();
+        let text = std::fs::read_to_string(dir.path().join("LRSV/raw/live/2026-10-09/1600.ndjson"))
+            .unwrap();
         assert_eq!(from_ndjson(&text).unwrap().len(), 2);
     }
 

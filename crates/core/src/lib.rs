@@ -2,6 +2,7 @@
 //! No I/O here, so it builds for both native and wasm32.
 
 pub mod adsblol;
+pub mod airport;
 pub mod area;
 pub mod history;
 pub mod ingest;
