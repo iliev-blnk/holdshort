@@ -14,7 +14,13 @@ pub const RETRY_PRIMARY_MS: i64 = 600_000;
 pub const METAR_MS: i64 = 1_800_000;
 pub const SLOT_MS: i64 = 300_000;
 pub const BUFFER_MS: i64 = 86_400_000;
-pub const MAX_FLUSH: usize = 12;
+/// Slots flushed per alarm: one keeps every alarm small; catch-up still runs
+/// at 30x real time.
+pub const MAX_FLUSH: usize = 1;
+/// Alarms fire this long after each grid point.
+pub const ALARM_OFFSET_MS: i64 = 250;
+/// How often the cached `/health` coverage is recomputed.
+pub const HEALTH_MS: i64 = 900_000;
 const WINDOW_MS: i64 = 10_000;
 
 /// Persisted between alarms (as JSON in the Durable Object).
@@ -24,6 +30,8 @@ pub struct IngestState {
     pub primary_failures: u32,
     pub last_primary_try_ms: i64,
     pub last_metar_ms: i64,
+    #[serde(default)]
+    pub last_health_ms: i64,
 }
 
 impl Default for IngestState {
@@ -33,6 +41,7 @@ impl Default for IngestState {
             primary_failures: 0,
             last_primary_try_ms: 0,
             last_metar_ms: 0,
+            last_health_ms: 0,
         }
     }
 }
@@ -76,6 +85,24 @@ impl IngestState {
     pub fn metar_due(&self, now_ms: i64) -> bool {
         now_ms - self.last_metar_ms >= METAR_MS
     }
+
+    pub fn health_due(&self, now_ms: i64) -> bool {
+        now_ms - self.last_health_ms >= HEALTH_MS
+    }
+
+    /// Whether this state differs from `before` in a way worth a storage
+    /// write. A routine adsb.lol poll only moves `last_primary_try_ms`, which
+    /// matters only in fallback, so it is not saved then.
+    pub fn needs_save(&self, before: &IngestState) -> bool {
+        let routine = self.source == Src::Adsblol && before.source == Src::Adsblol;
+        if routine {
+            let mut a = self.clone();
+            a.last_primary_try_ms = before.last_primary_try_ms;
+            a != *before
+        } else {
+            self != before
+        }
+    }
 }
 
 /// Start of the 5-min UTC slot containing `ts_ms`.
@@ -90,19 +117,62 @@ pub fn chunk_key(slot_ms: i64) -> String {
     t.format("raw/live/%Y-%m-%d/%H%M.ndjson").to_string()
 }
 
-/// Finished slots to flush now: oldest first, at most `MAX_FLUSH`.
-pub fn slots_to_flush(buffered: &[i64], now_ms: i64) -> Vec<i64> {
-    let current = slot_of(now_ms);
-    // A BTreeSet is sorted and de-duplicated.
-    let set: BTreeSet<i64> = buffered.iter().copied().filter(|&s| s < current).collect();
-    set.into_iter().take(MAX_FLUSH).collect()
+/// D1 rejects rows over 2 MB; chunk parts stay under this.
+pub const MAX_PART_BYTES: usize = 1_500_000;
+
+/// Key of part `n` of a slot's chunk: part 0 is `chunk_key`, later parts
+/// get a `-n` suffix (`raw/live/YYYY-MM-DD/HHMM-n.ndjson`).
+pub fn chunk_part_key(slot_ms: i64, part: usize) -> String {
+    let key = chunk_key(slot_ms);
+    if part == 0 {
+        key
+    } else {
+        key.replace(".ndjson", &format!("-{part}.ndjson"))
+    }
 }
 
-/// Slots older than the 24 h buffer cap.
-pub fn overflow_slots(buffered: &[i64], now_ms: i64) -> Vec<i64> {
-    let cutoff = now_ms - BUFFER_MS;
-    let set: BTreeSet<i64> = buffered.iter().copied().filter(|&s| s < cutoff).collect();
-    set.into_iter().collect()
+/// Split NDJSON into parts of at most `max_bytes`, on line boundaries. A
+/// single longer line becomes its own part.
+pub fn split_chunk(body: &str, max_bytes: usize) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut cur = String::new();
+    // `split_inclusive` keeps each line's trailing newline.
+    for line in body.split_inclusive('\n') {
+        if !cur.is_empty() && cur.len() + line.len() > max_bytes {
+            parts.push(std::mem::take(&mut cur));
+        }
+        cur.push_str(line);
+    }
+    if !cur.is_empty() {
+        parts.push(cur);
+    }
+    parts
+}
+
+/// What to do with the oldest buffered slot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BufferAction {
+    /// Older than the 24 h cap: delete it and record a gap.
+    Drop(i64),
+    /// Finished: write it to R2.
+    Flush(i64),
+    Done,
+}
+
+/// Decide the next buffer step from the oldest buffered slot and how many
+/// slots this alarm already flushed. Dropping ignores the flush cap.
+pub fn next_buffer_action(oldest: Option<i64>, now_ms: i64, flushed: usize) -> BufferAction {
+    match oldest {
+        Some(slot) if slot < now_ms - BUFFER_MS => BufferAction::Drop(slot),
+        Some(slot) if slot < slot_of(now_ms) && flushed < MAX_FLUSH => BufferAction::Flush(slot),
+        _ => BufferAction::Done,
+    }
+}
+
+/// Next alarm time on a fixed grid (`interval` + `ALARM_OFFSET_MS`), so the
+/// handler's own run time never makes the loop drift.
+pub fn next_alarm_ms(now_ms: i64, interval_ms: i64) -> i64 {
+    ((now_ms - ALARM_OFFSET_MS).div_euclid(interval_ms) + 1) * interval_ms + ALARM_OFFSET_MS
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -211,27 +281,144 @@ mod tests {
     }
 
     #[test]
-    fn flush_is_capped_oldest_first() {
-        let now = T0 + 20 * SLOT_MS + 1_000;
-        // 20 finished slots (each twice, unordered) + the current one.
-        let mut buffered: Vec<i64> = (0..20).rev().map(|i| T0 + i * SLOT_MS).collect();
-        buffered.extend(buffered.clone());
-        buffered.push(slot_of(now));
-        let got = slots_to_flush(&buffered, now);
-        let want: Vec<i64> = (0..MAX_FLUSH as i64).map(|i| T0 + i * SLOT_MS).collect();
-        assert_eq!(got, want);
+    fn small_chunk_is_one_part() {
+        let body = "a\nb\n";
+        assert_eq!(split_chunk(body, 100), vec![body.to_string()]);
+    }
+
+    #[test]
+    fn big_chunk_splits_on_line_boundaries() {
+        let body = "aaaa\nbbbb\ncccc\n";
+        let parts = split_chunk(body, 10);
+        assert_eq!(parts, vec!["aaaa\nbbbb\n", "cccc\n"]);
+        assert!(parts.iter().all(|p| p.len() <= 10));
+    }
+
+    #[test]
+    fn oversized_line_gets_its_own_part() {
+        let parts = split_chunk("aaaaaaaaaaaa\nb\n", 10);
+        assert_eq!(parts, vec!["aaaaaaaaaaaa\n", "b\n"]);
+    }
+
+    #[test]
+    fn part_keys() {
+        assert_eq!(chunk_part_key(T0, 0), "raw/live/2026-10-09/1600.ndjson");
+        assert_eq!(chunk_part_key(T0, 2), "raw/live/2026-10-09/1600-2.ndjson");
+    }
+
+    #[test]
+    fn empty_buffer_is_done() {
+        assert_eq!(next_buffer_action(None, T0, 0), BufferAction::Done);
+    }
+
+    #[test]
+    fn finished_slot_is_flushed() {
+        let now = T0 + 2 * SLOT_MS + 1_000;
+        assert_eq!(
+            next_buffer_action(Some(T0), now, 0),
+            BufferAction::Flush(T0)
+        );
+    }
+
+    #[test]
+    fn flush_is_capped_per_alarm() {
+        let now = T0 + 20 * SLOT_MS;
+        assert_eq!(
+            next_buffer_action(Some(T0), now, MAX_FLUSH),
+            BufferAction::Done
+        );
     }
 
     #[test]
     fn current_slot_never_flushed() {
-        assert!(slots_to_flush(&[slot_of(T0 + 5)], T0 + 5).is_empty());
+        assert_eq!(
+            next_buffer_action(Some(slot_of(T0 + 5)), T0 + 5, 0),
+            BufferAction::Done
+        );
     }
 
     #[test]
-    fn overflow_after_24h() {
+    fn overflow_after_24h_is_dropped_even_past_cap() {
         let now = T0 + BUFFER_MS + SLOT_MS;
-        let got = overflow_slots(&[T0, T0, T0 + SLOT_MS, T0 + 2 * SLOT_MS], now);
-        assert_eq!(got, vec![T0]);
+        assert_eq!(
+            next_buffer_action(Some(T0), now, MAX_FLUSH),
+            BufferAction::Drop(T0)
+        );
+    }
+
+    #[test]
+    fn next_alarm_on_grid() {
+        assert_eq!(
+            next_alarm_ms(T0 + 3_456, POLL_MS),
+            T0 + 10_000 + ALARM_OFFSET_MS
+        );
+        // Fired slightly late at +10 260: next is the following grid point, no drift.
+        assert_eq!(
+            next_alarm_ms(T0 + 10_260, POLL_MS),
+            T0 + 20_000 + ALARM_OFFSET_MS
+        );
+        // Not yet fired at +10 249: still aims at +10 250.
+        assert_eq!(
+            next_alarm_ms(T0 + 10_249, POLL_MS),
+            T0 + 10_000 + ALARM_OFFSET_MS
+        );
+        assert_eq!(
+            next_alarm_ms(T0 + 1, FALLBACK_POLL_MS) % FALLBACK_POLL_MS,
+            ALARM_OFFSET_MS
+        );
+    }
+
+    #[test]
+    fn routine_primary_poll_needs_no_save() {
+        let before = IngestState::default();
+        let mut after = before.clone();
+        after.record(Src::Adsblol, true, T0);
+        assert!(!after.needs_save(&before));
+    }
+
+    #[test]
+    fn source_failure_or_metar_change_needs_save() {
+        let before = IngestState::default();
+        let mut failed = before.clone();
+        failed.record(Src::Adsblol, false, T0);
+        assert!(failed.needs_save(&before));
+        let metar = IngestState {
+            last_metar_ms: T0,
+            ..before.clone()
+        };
+        assert!(metar.needs_save(&before));
+        let health = IngestState {
+            last_health_ms: T0,
+            ..before.clone()
+        };
+        assert!(health.needs_save(&before));
+    }
+
+    #[test]
+    fn fallback_retry_time_needs_save() {
+        let mut before = IngestState::default();
+        before.record(Src::Adsblol, false, T0);
+        before.record(Src::Adsblol, false, T0);
+        let mut after = before.clone();
+        after.record(Src::Adsblol, false, T0 + RETRY_PRIMARY_MS);
+        assert!(after.needs_save(&before));
+    }
+
+    #[test]
+    fn health_refresh_every_15_min() {
+        let s = IngestState {
+            last_health_ms: T0,
+            ..IngestState::default()
+        };
+        assert!(!s.health_due(T0 + HEALTH_MS - 1));
+        assert!(s.health_due(T0 + HEALTH_MS));
+    }
+
+    #[test]
+    fn old_state_json_still_loads() {
+        let old = r#"{"source":"adsblol","primary_failures":0,"last_primary_try_ms":5,"last_metar_ms":7}"#;
+        let s: IngestState = serde_json::from_str(old).unwrap();
+        assert_eq!(s.last_health_ms, 0);
     }
 
     #[test]

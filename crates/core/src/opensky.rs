@@ -16,6 +16,9 @@ const MAX_AGE_MS: i64 = 30_000;
 
 #[derive(Deserialize)]
 struct Response {
+    // Required: present on every real response, absent on error bodies.
+    #[allow(dead_code)]
+    time: i64,
     // `null` when no aircraft are in the box.
     states: Option<Vec<Vec<Value>>>,
 }
@@ -121,6 +124,11 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn error_body_is_error() {
+        assert!(parse(r#"{"error":"Too many requests"}"#, POLL).is_err());
     }
 
     #[test]

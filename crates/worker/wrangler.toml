@@ -15,6 +15,8 @@ bindings = [{ name = "INGEST", class_name = "Ingest" }]
 tag = "v1"
 new_sqlite_classes = ["Ingest"]
 
-[[r2_buckets]]
-binding = "BUCKET"
-bucket_name = "holdshort"
+[[d1_databases]]
+binding = "DB"
+database_name = "holdshort"
+database_id = "6b01499f-78e6-4af7-aaab-4e9faab2905d"
+migrations_dir = "migrations"

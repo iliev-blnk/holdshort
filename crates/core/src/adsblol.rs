@@ -10,7 +10,7 @@ pub const MAX_SEEN_POS_S: f64 = 30.0;
 
 #[derive(Deserialize)]
 struct Response {
-    #[serde(default)]
+    // Required: an error body without `ac` must fail the poll, not look empty.
     ac: Vec<Aircraft>,
     now: Option<f64>,
 }
@@ -154,6 +154,17 @@ mod tests {
         let obs = parse(REAL, 0).unwrap();
         assert!(!obs.is_empty());
         assert!(obs.iter().all(|o| o.hex == o.hex.to_lowercase()));
+    }
+
+    #[test]
+    fn error_body_is_error() {
+        assert!(parse("{}", 0).is_err());
+        assert!(parse(r#"{"msg":"rate limited"}"#, 0).is_err());
+    }
+
+    #[test]
+    fn no_aircraft_is_ok() {
+        assert!(parse(r#"{"ac":[],"now":1}"#, 0).unwrap().is_empty());
     }
 
     #[test]
