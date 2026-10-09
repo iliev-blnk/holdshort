@@ -1,0 +1,21 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --exclude holdshort-worker --all-targets -- -D warnings
+      - run: cargo clippy -p holdshort-worker --target wasm32-unknown-unknown -- -D warnings
+      - run: cargo test --workspace --exclude holdshort-worker
+      - run: cargo build -p holdshort-worker --target wasm32-unknown-unknown
