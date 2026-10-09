@@ -1,0 +1,7 @@
+{"ac":[
+{"hex":"4BB208","type":"adsb_icao","flight":"THY6VU  ","r":"TC-LPH","t":"A21N","alt_baro":19550,"alt_geom":20475,"gs":385.9,"track":263.0,"baro_rate":1792,"squawk":"2311","category":"A3","lat":40.951445,"lon":28.03093,"seen_pos":2.5,"seen":0.4},
+{"hex":"4bb42b","type":"adsb_icao","flight":"BKI603  ","alt_baro":"ground","gs":10.8,"track":357.2,"lat":40.9744,"lon":28.8143,"seen_pos":0.1,"seen":0.1},
+{"hex":"4bc8d2","type":"adsb_icao","flight":"PGT703B ","alt_baro":22775,"lat":41.3077,"lon":28.9268,"seen_pos":31.0,"seen":1.0},
+{"hex":"500213","type":"adsb_icao","flight":"MEA267  ","lastPosition":{"lat":41.1752,"lon":29.1742,"nic":8,"rc":186,"seen_pos":45.2},"seen":2.0},
+{"hex":"~2b9049","type":"tisb_trackfile","alt_baro":5600,"geom_rate":-576,"lat":41.1,"lon":28.6}
+],"msg":"No error","now":1791561733502,"total":5,"ctime":1791561733502,"ptime":1}
