@@ -4,7 +4,9 @@ use holdshort_core::airport::Airport;
 use holdshort_core::{Metar, Obs};
 use serde::Serialize;
 
-use crate::classify::{Kind, arrival_fit, departure_fit, is_overflight, kind};
+use crate::classify::{
+    Kind, arrival_fit, climb_fpm, departs_seen_high, departure_fit, is_overflight, kind,
+};
 use crate::config::{Bin, bins};
 use crate::detect::{asma_entry_ms, go_arounds, holds, liftoff, touchdown};
 use crate::flights::{Track, mode, split};
@@ -137,7 +139,12 @@ fn analyse(t: &Track, ap: &'static Airport, wx: &Weather) -> (Flight, Vec<Event>
 
     let arr = arrival_fit(t, ap, wx);
     let dep = departure_fit(t, ap, wx);
-    f.kind = kind(&arr, &dep, is_overflight(t, ap, wx));
+    let high_dep = dep.is_none() && departs_seen_high(t, ap, wx);
+    f.kind = kind(
+        arr.is_some(),
+        dep.is_some() || high_dep,
+        is_overflight(t, ap, wx),
+    );
     let mut ev = Vec::new();
     if let Some(fit) = &arr {
         let (ms, low) = touchdown(t, fit);
@@ -180,6 +187,26 @@ fn analyse(t: &Track, ap: &'static Airport, wx: &Weather) -> (Flight, Vec<Event>
             Some(pos),
             Some(0.0),
         ));
+    }
+    if high_dep {
+        // No runway: liftoff from height above the field / climb rate.
+        let elev = ap
+            .runways
+            .iter()
+            .map(|r| r.elevation_ft)
+            .fold(f64::INFINITY, f64::min);
+        let later = t
+            .points
+            .iter()
+            .find(|p| p.ts_ms - first.ts_ms >= 60_000)
+            .unwrap_or(last);
+        let h0 = crate::height::h_agl(first, wx.at(first.ts_ms), elev);
+        if let (Some(h0), Some(c)) = (h0, climb_fpm(first, later, wx, elev)) {
+            let ms = first.ts_ms - (h0.max(0.0) / (c / 60.0) * 1000.0).round() as i64;
+            f.liftoff_ms = Some(ms);
+            f.time_low_confidence = true;
+            ev.push(event(&f, ms, EventKind::Liftoff, None, None, Some(0.0)));
+        }
     }
     f.runway_margin_m = arr
         .as_ref()
@@ -271,6 +298,28 @@ mod tests {
         assert!(today.flights[0].touchdown_ms.unwrap() >= D);
         let yesterday = twin_day(&LTFM, D - 86_400_000, pts, &[]);
         assert!(yesterday.flights.is_empty());
+    }
+
+    #[test]
+    fn high_departure_gets_estimated_liftoff() {
+        use crate::testkit::legs;
+        let lat = LTFM.lat + 12.0 / 60.0;
+        let t0 = D + 3_600_000;
+        let mut pts = legs(lat, LTFM.lon, 11_000.0, 300.0, &[(120.0, 0.0)], t0);
+        for (k, p) in pts.iter_mut().enumerate() {
+            let alt = 11_000.0 + 2000.0 * (k as f64 * 5.0 / 60.0);
+            p.alt_baro_ft = Some(alt as i32);
+            p.alt_geom_ft = Some(alt as i32);
+            p.vrate_fpm = Some(2000);
+        }
+        let day = twin_day(&LTFM, D, pts, &[]);
+        let f = &day.flights[0];
+        assert_eq!(f.kind, Kind::Departure);
+        assert_eq!(f.dep_runway, None);
+        assert!(f.time_low_confidence);
+        // ~10,700 ft above the field at 2,000 ft/min ≈ 5.4 min before first sight.
+        let back = (t0 - f.liftoff_ms.unwrap()) as f64 / 1000.0;
+        assert!((back - 321.0).abs() < 10.0, "{back}");
     }
 
     #[test]

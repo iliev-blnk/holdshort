@@ -14,6 +14,9 @@ const LOW_FT: f64 = 2_000.0;
 const END_FT: f64 = 1_500.0;
 const MIN_POINTS: usize = 3;
 const OVERFLIGHT_FT: f64 = 5_000.0;
+const HIGH_DEP_NM: f64 = 25.0;
+const HIGH_DEP_FT: f64 = 20_000.0;
+const MIN_CLIMB_FPM: f64 = 300.0;
 /// A runway margin below this means the runway choice is ambiguous.
 pub const AMBIGUOUS_M: f64 = 60.0;
 
@@ -134,8 +137,45 @@ pub fn is_overflight(t: &Track, ap: &Airport, wx: &Weather) -> bool {
             .all(|p| h_agl(p, wx.at(p.ts_ms), elev).is_some_and(|h| h >= OVERFLIGHT_FT))
 }
 
-pub fn kind(arr: &Option<Fit>, dep: &Option<Fit>, overflight: bool) -> Kind {
-    match (arr.is_some(), dep.is_some()) {
+/// A departure first seen climbing away from the airport above the low
+/// coverage: first point within 25 nm and below 20,000 ft, climbing at least
+/// 300 ft/min, and further from the airport a minute later. Receivers south
+/// of LTFM often only see northbound departures from ~4,000–16,000 ft.
+pub fn departs_seen_high(t: &Track, ap: &Airport, wx: &Weather) -> bool {
+    let Some(first) = t.points.first() else {
+        return false;
+    };
+    let elev = ap
+        .runways
+        .iter()
+        .map(|r| r.elevation_ft)
+        .fold(f64::INFINITY, f64::min);
+    let d = |p: &Obs| holdshort_core::area::distance_nm(ap.lat, ap.lon, p.lat, p.lon);
+    let Some(h0) = h_agl(first, wx.at(first.ts_ms), elev) else {
+        return false;
+    };
+    if d(first) > HIGH_DEP_NM || h0 >= HIGH_DEP_FT {
+        return false;
+    }
+    let Some(later) = t.points.iter().find(|p| p.ts_ms - first.ts_ms >= 60_000) else {
+        return false;
+    };
+    climb_fpm(first, later, wx, elev).is_some_and(|c| c >= MIN_CLIMB_FPM) && d(later) > d(first)
+}
+
+/// Climb rate at the first point: its reported rate, else measured to `later`.
+pub fn climb_fpm(first: &Obs, later: &Obs, wx: &Weather, elev: f64) -> Option<f64> {
+    if let Some(v) = first.vrate_fpm {
+        return Some(v as f64);
+    }
+    let h0 = h_agl(first, wx.at(first.ts_ms), elev)?;
+    let h1 = h_agl(later, wx.at(later.ts_ms), elev)?;
+    let mins = (later.ts_ms - first.ts_ms) as f64 / 60_000.0;
+    (mins > 0.0).then(|| (h1 - h0) / mins)
+}
+
+pub fn kind(arr: bool, dep: bool, overflight: bool) -> Kind {
+    match (arr, dep) {
         (true, true) => Kind::Both,
         (true, false) => Kind::Arrival,
         (false, true) => Kind::Departure,
@@ -217,8 +257,9 @@ mod tests {
             departure_fit(&t, &LTFM, &no_wx()),
         );
         assert!(arr.is_none() && dep.is_none());
+        assert!(!departs_seen_high(&t, &LTFM, &no_wx()));
         assert_eq!(
-            kind(&arr, &dep, is_overflight(&t, &LTFM, &no_wx())),
+            kind(false, false, is_overflight(&t, &LTFM, &no_wx())),
             Kind::Other
         );
     }
@@ -254,11 +295,61 @@ mod tests {
 
     #[test]
     fn kind_mapping() {
-        let t = track(approach(rwy("35L"), 0.0, 10.0, 0));
-        let a = arrival_fit(&t, &LTFM, &no_wx());
-        assert_eq!(kind(&a, &None, false), Kind::Arrival);
-        assert_eq!(kind(&None, &a, false), Kind::Departure);
-        assert_eq!(kind(&a, &a, false), Kind::Both);
-        assert_eq!(kind(&None, &None, true), Kind::Overflight);
+        assert_eq!(kind(true, false, false), Kind::Arrival);
+        assert_eq!(kind(false, true, true), Kind::Departure);
+        assert_eq!(kind(true, true, false), Kind::Both);
+        assert_eq!(kind(false, false, true), Kind::Overflight);
+        assert_eq!(kind(false, false, false), Kind::Other);
+    }
+
+    /// A departure first seen at 11,000 ft 12 nm out, already turned off the
+    /// runway heading, climbing 2,000 ft/min away from the airport.
+    fn high_departure() -> Track {
+        use crate::testkit::legs;
+        let lat = LTFM.lat + 12.0 / 60.0;
+        let mut pts = legs(lat, LTFM.lon, 11_000.0, 300.0, &[(120.0, 0.0)], 0);
+        for (k, p) in pts.iter_mut().enumerate() {
+            let alt = 11_000.0 + 2000.0 * (k as f64 * 5.0 / 60.0);
+            p.alt_baro_ft = Some(alt as i32);
+            p.alt_geom_ft = Some(alt as i32);
+            p.vrate_fpm = Some(2000);
+        }
+        track(pts)
+    }
+
+    #[test]
+    fn departure_first_seen_high() {
+        let t = high_departure();
+        assert!(departure_fit(&t, &LTFM, &no_wx()).is_none());
+        assert!(departs_seen_high(&t, &LTFM, &no_wx()));
+    }
+
+    #[test]
+    fn arrival_or_descent_is_not_a_high_departure() {
+        let t = track(approach(rwy("35L"), 0.0, 20.0, 0));
+        assert!(!departs_seen_high(&t, &LTFM, &no_wx()));
+        let mut far = high_departure();
+        for p in &mut far.points {
+            p.lat += 20.0 / 60.0; // first seen ~32 nm out
+        }
+        assert!(!departs_seen_high(&far, &LTFM, &no_wx()));
+    }
+
+    #[test]
+    fn climbing_towards_the_airport_is_not_a_departure() {
+        let mut t = high_departure();
+        t.points.reverse();
+        let first_ts = t.points[0].ts_ms;
+        for (k, p) in t.points.iter_mut().enumerate() {
+            p.ts_ms = first_ts + k as i64 * 5_000;
+        }
+        // Same climb, but each point is closer to the airport than the last.
+        let n = t.points.len();
+        for k in 0..n {
+            let alt = 11_000.0 + 2000.0 * (k as f64 * 5.0 / 60.0);
+            t.points[k].alt_baro_ft = Some(alt as i32);
+            t.points[k].alt_geom_ft = Some(alt as i32);
+        }
+        assert!(!departs_seen_high(&t, &LTFM, &no_wx()));
     }
 }
