@@ -1,0 +1,12 @@
+[package]
+name = "holdshort-twin"
+edition.workspace = true
+license.workspace = true
+version.workspace = true
+
+[lib]
+name = "holdshort_twin"
+
+[dependencies]
+holdshort-core.workspace = true
+serde.workspace = true

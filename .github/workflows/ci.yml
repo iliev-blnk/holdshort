@@ -18,4 +18,4 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
       # core stays I/O-free so a browser console can reuse it later.
-      - run: cargo build -p holdshort-core --target wasm32-unknown-unknown
+      - run: cargo build -p holdshort-core -p holdshort-twin --target wasm32-unknown-unknown
