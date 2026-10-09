@@ -5,7 +5,7 @@ use chrono::{Datelike, NaiveDate};
 use holdshort_core::airport::Airport;
 use holdshort_core::{Line, Metar, Obs, from_ndjson};
 use holdshort_twin::classify::Kind;
-use holdshort_twin::day::{EventKind, twin_day};
+use holdshort_twin::day::{DayTwin, EventKind, twin_day};
 
 use crate::compact::obs_key;
 use crate::parquet_io::{bins_parquet, events_parquet, flights_parquet, read_obs};
@@ -67,8 +67,13 @@ fn read_metars(store: &Store, ap: &Airport, day: NaiveDate) -> anyhow::Result<Ve
     Ok(out)
 }
 
-/// Run the twin for one airport-day and write its three Parquet files.
-pub fn run_day(store: &Store, ap: &'static Airport, day: NaiveDate) -> anyhow::Result<TwinSummary> {
+/// Load one airport-day (with neighbouring edge hours) and run the twin.
+/// Returns the twin, the positions it used, and the day's METAR reports.
+pub fn compute_day(
+    store: &Store,
+    ap: &'static Airport,
+    day: NaiveDate,
+) -> anyhow::Result<(DayTwin, Vec<Obs>, Vec<Metar>)> {
     let start = start_ms(day);
     let Some(mut obs) = read_day(store, ap, day)? else {
         bail!("no compacted data for {} {day}", ap.icao);
@@ -82,7 +87,14 @@ pub fn run_day(store: &Store, ap: &'static Airport, day: NaiveDate) -> anyhow::R
             obs.extend(extra.into_iter().filter(|o| keep.contains(&o.ts_ms)));
         }
     }
-    let twin = twin_day(ap, start, obs, &read_metars(store, ap, day)?);
+    let metars = read_metars(store, ap, day)?;
+    let twin = twin_day(ap, start, obs.clone(), &metars);
+    Ok((twin, obs, metars))
+}
+
+/// Run the twin for one airport-day and write its three Parquet files.
+pub fn run_day(store: &Store, ap: &'static Airport, day: NaiveDate) -> anyhow::Result<TwinSummary> {
+    let (twin, _, _) = compute_day(store, ap, day)?;
     let dir = format!("{}/twin/date={day}", ap.icao);
     store.put(
         &format!("{dir}/flights.parquet"),
