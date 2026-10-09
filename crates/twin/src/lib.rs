@@ -2,6 +2,7 @@
 //! runway operations and events. Pure logic, no I/O; builds for wasm32.
 
 pub mod classify;
+pub mod detect;
 pub mod flights;
 pub mod geo;
 pub mod height;
