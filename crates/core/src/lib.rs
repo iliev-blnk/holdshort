@@ -4,6 +4,7 @@
 pub mod adsblol;
 pub mod area;
 pub mod model;
+pub mod opensky;
 
 pub use model::*;
 
