@@ -3,6 +3,7 @@
 
 use worker::*;
 
+mod http;
 mod ingest_do;
 
 pub use ingest_do::Ingest;
