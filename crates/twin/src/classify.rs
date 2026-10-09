@@ -43,7 +43,7 @@ fn height(p: &Obs, wx: &Weather, r: &RunwayEnd) -> Option<f64> {
 }
 
 /// Whether point `p` is lined up with `r` inside the along-track window.
-fn aligned(p: &Obs, r: &RunwayEnd, along: (f64, f64)) -> Option<f64> {
+pub(crate) fn aligned(p: &Obs, r: &RunwayEnd, along: (f64, f64)) -> Option<f64> {
     let trk = p.track_deg? as f64;
     if heading_diff(trk, r.heading_deg) > ALIGN_DEG {
         return None;
