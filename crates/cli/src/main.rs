@@ -4,6 +4,7 @@ mod backfill;
 mod check;
 mod compact;
 mod dates;
+mod export;
 mod filter;
 mod history_fetch;
 mod live;
