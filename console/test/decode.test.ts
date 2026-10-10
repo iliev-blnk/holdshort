@@ -1,11 +1,12 @@
 import { readFileSync } from 'node:fs';
+import { gunzipSync } from 'node:zlib';
 import { describe, expect, test } from 'vitest';
 import { altAt, decodeTracks, gsAt, lonLatAt, trkAt } from '../src/data/decode';
 import type { DayJson } from '../src/data/types';
 
 const dir = new URL('./fixture/LTFM/2026-10-02/', import.meta.url);
 const buf = () => {
-  const b = readFileSync(new URL('tracks.bin', dir));
+  const b = gunzipSync(readFileSync(new URL('tracks.bin.gz', dir)));
   return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer;
 };
 const day: DayJson = JSON.parse(readFileSync(new URL('day.json', dir), 'utf8'));

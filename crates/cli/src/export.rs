@@ -5,6 +5,7 @@
 //! columns the browser reads straight into typed arrays.
 
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::Path;
 
 #[cfg(test)]
@@ -254,7 +255,7 @@ fn encode_tracks(tr: &Tracks) -> Vec<u8> {
     b
 }
 
-/// Write `<out>/<airport>/<date>/{day.json,tracks.bin}`.
+/// Write `<out>/<airport>/<date>/{day.json,tracks.bin.gz}`.
 pub fn write_day(
     out: &Path,
     airport: &str,
@@ -265,7 +266,11 @@ pub fn write_day(
     let dir = out.join(airport).join(date);
     std::fs::create_dir_all(&dir)?;
     std::fs::write(dir.join("day.json"), serde_json::to_vec(json)?)?;
-    std::fs::write(dir.join("tracks.bin"), tracks)?;
+    // Gzipped here because static hosts don't compress application/octet-stream;
+    // the console unpacks it with DecompressionStream.
+    let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+    gz.write_all(tracks)?;
+    std::fs::write(dir.join("tracks.bin.gz"), gz.finish()?)?;
     Ok(())
 }
 
@@ -811,6 +816,23 @@ mod tests {
     }
 
     #[test]
+    fn write_day_gzips_the_tracks() {
+        use std::io::Read;
+        let (tw, o) = two_flights();
+        let (j, bin) = build("LTFM", day(), &tw, &o);
+        let dir = tempfile::tempdir().unwrap();
+        write_day(dir.path(), "LTFM", "2026-10-02", &j, &bin).unwrap();
+        let day_dir = dir.path().join("LTFM/2026-10-02");
+        assert!(!day_dir.join("tracks.bin").exists());
+        let gz = std::fs::read(day_dir.join("tracks.bin.gz")).unwrap();
+        let mut out = Vec::new();
+        flate2::read::GzDecoder::new(&gz[..])
+            .read_to_end(&mut out)
+            .unwrap();
+        assert_eq!(out, bin);
+    }
+
+    #[test]
     fn index_lists_days_sorted_with_medians() {
         let dir = tempfile::tempdir().unwrap();
         write_day_json(dir.path(), "2026-10-03", &[Some(600)]);
@@ -844,7 +866,7 @@ mod tests {
         for rel in [
             "index.json",
             "LTFM/2026-10-02/day.json",
-            "LTFM/2026-10-02/tracks.bin",
+            "LTFM/2026-10-02/tracks.bin.gz",
         ] {
             let got = std::fs::read(tmp.path().join(rel)).unwrap();
             let path = fixture.join(rel);
