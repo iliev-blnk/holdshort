@@ -97,7 +97,9 @@ holdshort twin-check 2026-09-29..2026-10-08 --airport LTFM --sample 5
 
 The engine lives in `crates/twin`. It is pure Rust with no I/O, so the console can run it in the
 browser later. A flight is an arrival when at least three points line up with a runway's extended
-centreline below 2,000 ft and the last one is below 1,500 ft. The runway is the one with the
+centreline below 2,000 ft and the last one is below 1,500 ft. A flight that coverage loses on
+final also counts, if its track ends lined up and still descending below 2,500 ft within 10 nm;
+its touchdown time is then marked low-confidence. The runway is the one with the
 smallest mean cross-track distance. The touchdown time is extrapolated from the last point's ground
 speed and its distance to the touchdown zone. Height comes from barometric altitude corrected with
 the METAR QNH.
@@ -110,15 +112,15 @@ and ASMA numbers are plausible.
 
 | Check | Result | Bar |
 | --- | --- | --- |
-| Movements per day | 1,248 (−13.9% vs DHMI) | ±15% |
+| Movements per day | 1,282 (−11.5% vs DHMI) | ±15% |
 | Arrivals with a clear runway | 99.9% | ≥ 95% |
-| Landings with tailwind ≤ 5 kt | 93.0% | ≥ 90% |
-| Go-arounds per 1,000 arrivals | 5.3 | 0.5–10 |
-| Median ASMA | 16.8 min (p90 22.1) | 5–25 min |
+| Landings with tailwind ≤ 5 kt | 92.5% | ≥ 90% |
+| Go-arounds per 1,000 arrivals | 5.1 | 0.5–10 |
+| Median ASMA | 16.8 min (p90 22.2) | 5–25 min |
 
-Over the 10 days the twin found 6,769 arrivals, 5,712 departures, 36 go-arounds, 151 flights
-that held (median 8.9 minutes) and 70 runway configuration changes. Every day was north flow:
-arrivals landed on 35R (3,459) and 34L (3,212), and the rest on 36, 35L and 34R.
+Over the 10 days the twin found 7,111 arrivals, 5,712 departures, 36 go-arounds, 151 flights
+that held (median 8.9 minutes) and 90 runway configuration changes. Every day was north flow:
+arrivals landed on 35R (3,488), 34L (3,251) and 36 (334), and a few on 35L and 34R.
 
 ### Limitations
 
@@ -128,11 +130,13 @@ The twin can only see what the feeders see, and Istanbul's coverage has holes:
   300 ft, but departures usually appear at around 11,000 ft, 12 nm out. They are recognised by
   their climb away from the airport, but their runway is unknown (12 of 5,712 have one) and their
   liftoff time is an estimate. The configuration label therefore mostly reads `DEP -`.
-- **Some movements are never seen.** There are about 16% fewer departures than arrivals,
-  which matches departures that never come into view. Some approaches are also lost on final
-  above 1,500 ft and count as "other": about 37 a day, mostly to runway 36. Coverage also varies
-  from day to day. From 6 to 8 October the lowest height seen on final rose from about 300 ft to
-  500–775 ft, and detected arrivals fell from about 740 to 590 a day.
+- **Some movements are never seen or only seen in part.** There are about 20% fewer departures
+  than arrivals, which matches departures that never come into view. Approaches to runway 36 are
+  usually lost on final around 2,000 ft. The twin counts them through the lost-on-final rule
+  (342 over the 10 days, 274 of them on 36) with a low-confidence touchdown time. As a check,
+  83% of them depart LTFM again within 24 hours, against 86% of the other arrivals. Coverage
+  also varies from day to day: from 6 to 8 October the lowest height seen on final rose from
+  about 300 ft to 500–775 ft.
 - **Traffic of nearby airports is excluded, not identified.** Sabiha Gökçen (SAW) and smaller
   airfields lie inside the 50 nm circle. Their traffic shows up as overflight or other.
 - **Runway headings come from the thresholds.** OurAirports gives LTFM's 16/34, 17/35 and 18/36
