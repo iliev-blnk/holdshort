@@ -3,10 +3,12 @@
 A digital twin of airport airspace, built from open ADS-B data. The main airport is Istanbul
 (LTFM, ~1,500 flights a day); Suceava (LRSV) is a second, smaller one.
 
-This repository is sub-project 1 of 6: **ingest**. It builds a dataset of every aircraft
+This repository holds sub-projects 1 and 2 of 6. **Ingest** builds a dataset of every aircraft
 position within 50 nm of each airport. Complete days come from the adsb.lol daily archive, and a live
-poller adds same-day data. Each day is compacted to Parquet alongside METAR weather. Later
-sub-projects build the twin engine, console and forecasting research on top of this data.
+poller adds same-day data. Each day is compacted to Parquet alongside METAR weather. The **twin**
+turns those positions into flights and airport events: arrivals and departures with their runway
+and time, go-arounds, holds, approach time (ASMA) and the runway configuration in use. Later
+sub-projects build the console and forecasting research on top of this.
 
 ## How it works
 
@@ -77,6 +79,69 @@ OPENSKY_CLIENT_ID=...
 OPENSKY_CLIENT_SECRET=...
 ```
 
+## Twin
+
+```sh
+holdshort twin       2026-09-29..2026-10-08 --airport LTFM --airport LRSV
+holdshort twin-check 2026-09-29..2026-10-08 --airport LTFM --sample 5
+```
+
+`twin` reads a day's `obs.parquet` and weather and writes `data/<ICAO>/twin/date=YYYY-MM-DD/`:
+
+- `flights.parquet`: one row per flight, with its kind (arrival, departure, both, overflight,
+  other), runway, touchdown or liftoff time, go-arounds, holds and ASMA.
+- `events.parquet`: touchdown, liftoff, go_around, hold_start/hold_end, asma_entry and
+  config_change, each with a time, position and height.
+- `runway_bins.parquet`: arrivals and departures per runway in 10-minute bins, with the
+  configuration label (for example `ARR 34L,35R / DEP -`).
+
+The engine lives in `crates/twin`. It is pure Rust with no I/O, so the console can run it in the
+browser later. A flight is an arrival when at least three points line up with a runway's extended
+centreline below 2,000 ft and the last one is below 1,500 ft. The runway is the one with the
+smallest mean cross-track distance. The touchdown time is extrapolated from the last point's ground
+speed and its distance to the touchdown zone. Height comes from barometric altitude corrected with
+the METAR QNH.
+
+`twin-check` judges the result against public figures. For Istanbul it compares movements with
+DHMI's published average (1,449 a day in April 2026) and checks that the runway, wind, go-around
+and ASMA numbers are plausible.
+
+### Results: LTFM, 10 days (29 Sep – 8 Oct 2026)
+
+| Check | Result | Bar |
+| --- | --- | --- |
+| Movements per day | 1,248 (−13.9% vs DHMI) | ±15% |
+| Arrivals with a clear runway | 99.9% | ≥ 95% |
+| Landings with tailwind ≤ 5 kt | 93.0% | ≥ 90% |
+| Go-arounds per 1,000 arrivals | 5.3 | 0.5–10 |
+| Median ASMA | 16.8 min (p90 22.1) | 5–25 min |
+
+Over the 10 days the twin found 6,769 arrivals, 5,712 departures, 36 go-arounds, 151 flights
+that held (median 8.9 minutes) and 70 runway configuration changes. Every day was north flow:
+arrivals landed on 35R (3,459) and 34L (3,212), and the rest on 36, 35L and 34R.
+
+### Limitations
+
+The twin can only see what the feeders see, and Istanbul's coverage has holes:
+
+- **No ground coverage, and departures are first seen high.** Arrivals are tracked down to about
+  300 ft, but departures usually appear at around 11,000 ft, 12 nm out. They are recognised by
+  their climb away from the airport, but their runway is unknown (12 of 5,712 have one) and their
+  liftoff time is an estimate. The configuration label therefore mostly reads `DEP -`.
+- **Some movements are never seen.** There are about 16% fewer departures than arrivals,
+  which matches departures that never come into view. Some approaches are also lost on final
+  above 1,500 ft and count as "other": about 37 a day, mostly to runway 36. Coverage also varies
+  from day to day. From 6 to 8 October the lowest height seen on final rose from about 300 ft to
+  500–775 ft, and detected arrivals fell from about 740 to 590 a day.
+- **Traffic of nearby airports is excluded, not identified.** Sabiha Gökçen (SAW) and smaller
+  airfields lie inside the 50 nm circle. Their traffic shows up as overflight or other.
+- **Runway headings come from the thresholds.** OurAirports gives LTFM's 16/34, 17/35 and 18/36
+  headings 5° off (174/354 instead of 179/359). With those headings the R runways almost never
+  matched, so the twin derives each heading from the two threshold positions instead.
+- **Suceava has no low-altitude coverage.** In 10 days no aircraft was seen below 14,800 ft
+  within 47 nm of LRSV, so all of its 369 flights are overflights. A local feeder would fix this.
+  `twin-check` reports LRSV numbers for information only.
+
 ## Data sources and licences
 
 - [adsb.lol](https://adsb.lol): live API and the `globe_history` daily archive. The database is
@@ -87,13 +152,14 @@ OPENSKY_CLIENT_SECRET=...
 
 ## Roadmap
 
-1. **Ingest** (this repo, now)
-2. Twin engine: per-aircraft state; events such as takeoff, landing, runway in use, go-around,
-   holding and taxi
+1. **Ingest** (done)
+2. **Twin engine** (done): flights, runways, touchdown and liftoff, go-arounds, holds, ASMA,
+   runway configuration
 3. Console: map, event timeline, replay
-4. Research: taxi-out time, throughput and runway-configuration forecasts compared against
-   baselines, served from Rust via ONNX
-5. Gate/stand allocation or anomaly detection
+4. Research: forecasts of ASMA, runway configuration, hourly movements and go-around probability,
+   compared against baselines and served from Rust via ONNX. Taxi times are out of reach because
+   there is no ground coverage.
+5. Anomaly detection
 6. Technical write-up
 
 ## License
