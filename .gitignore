@@ -10,3 +10,6 @@ out/
 data/
 console/public/data/
 console/public/basemap/
+console/dist/
+console/test-results/
+console/playwright-report/
