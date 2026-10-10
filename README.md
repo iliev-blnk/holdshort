@@ -3,12 +3,15 @@
 A digital twin of airport airspace, built from open ADS-B data. The main airport is Istanbul
 (LTFM, ~1,500 flights a day); Suceava (LRSV) is a second, smaller one.
 
-This repository holds sub-projects 1 and 2 of 6. **Ingest** builds a dataset of every aircraft
+This repository holds sub-projects 1–3 of 6. **Ingest** builds a dataset of every aircraft
 position within 50 nm of each airport. Complete days come from the adsb.lol daily archive, and a live
 poller adds same-day data. Each day is compacted to Parquet alongside METAR weather. The **twin**
 turns those positions into flights and airport events: arrivals and departures with their runway
 and time, go-arounds, holds, approach time (ASMA) and the runway configuration in use. Later
-sub-projects build the console and forecasting research on top of this.
+sub-projects build forecasting research on top of this.
+
+**[Live console: holdshort.pages.dev](https://holdshort.pages.dev)**, a replay of any of the
+10 days with every aircraft, runway and go-around.
 
 ## How it works
 
@@ -146,12 +149,47 @@ The twin can only see what the feeders see, and Istanbul's coverage has holes:
   within 47 nm of LRSV, so all of its 369 flights are overflights. A local feeder would fix this.
   `twin-check` reports LRSV numbers for information only.
 
+## Console
+
+[![The console replaying 2 October 2026 at 10:04 UTC](docs/console.png)](https://holdshort.pages.dev)
+
+**[holdshort.pages.dev](https://holdshort.pages.dev)** replays a day at Istanbul from the twin's
+output. Aircraft move on the map in their kind's colour (arrivals blue, departures orange,
+other traffic grey) with two-minute trails. The timeline shows movements per 10 minutes and the
+runway configuration over the day. The side panel lists events as they happen, and clicking an
+aircraft or an event opens its flight. The URL keeps the day, time and selected flight
+(`?d=2026-10-02&t=10:04&f=…`), so a moment can be linked.
+
+It is a static site on Cloudflare Pages with no server:
+
+- `holdshort export <range>` writes each day as `day.json` (flights, events, configuration
+  and histogram) and `tracks.bin.gz`. The latter holds every position as little-endian columns
+  that the browser reads straight into typed arrays (about 1.9 MB gzipped per day).
+- `console/` is Vite + TypeScript with MapLibre and deck.gl. It interpolates positions between
+  points and hides an aircraft in coverage gaps over five minutes.
+- The basemap is an OpenStreetMap extract from [Protomaps](https://protomaps.com), unpacked into
+  plain tile files, because Pages does not serve the byte ranges a PMTiles archive needs.
+
+To rebuild and deploy:
+
+```sh
+holdshort export 2026-09-29..2026-10-08 --airport LTFM   # → console/public/data
+console/scripts/basemap.sh                                # → console/public/basemap
+pnpm --dir console install
+pnpm --dir console build
+pnpm --dir console run pages:deploy                       # wrangler, Cloudflare account
+```
+
+`pnpm --dir console test` runs the unit tests, and `pnpm --dir console e2e` runs a browser smoke
+test on a small fixture day. Set `CHROMIUM_PATH` to use a local Chromium.
+
 ## Data sources and licences
 
 - [adsb.lol](https://adsb.lol): live API and the `globe_history` daily archive. The database is
   under the Open Database License (ODbL); feeder contributions are CC0.
 - [OpenSky Network](https://opensky-network.org): fallback live feed, used under its terms of use.
 - [aviationweather.gov](https://aviationweather.gov): live METAR.
+- [Protomaps](https://protomaps.com) basemap from [OpenStreetMap](https://www.openstreetmap.org/copyright) data (ODbL).
 - [Iowa Environmental Mesonet](https://mesonet.agron.iastate.edu): METAR archive.
 
 ## Roadmap
@@ -159,7 +197,7 @@ The twin can only see what the feeders see, and Istanbul's coverage has holes:
 1. **Ingest** (done)
 2. **Twin engine** (done): flights, runways, touchdown and liftoff, go-arounds, holds, ASMA,
    runway configuration
-3. Console: map, event timeline, replay
+3. **Console** (done): replay with map, timeline, events and shareable links
 4. Research: forecasts of ASMA, runway configuration, hourly movements and go-around probability,
    compared against baselines and served from Rust via ONNX. Taxi times are out of reach because
    there is no ground coverage.
