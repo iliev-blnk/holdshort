@@ -1,0 +1,28 @@
+[project]
+name = "holdshort-research"
+version = "0.1.0"
+description = "Forecasting research on the holdshort twin: landing time at 40 nm and arrivals per hour"
+requires-python = ">=3.12"
+license = "MIT"
+dependencies = [
+  "polars>=2.0",
+  "numpy>=2.3",
+  "lightgbm>=4.7",
+  "onnx>=1.23",
+  "onnxmltools>=1.16",
+  "onnxruntime>=1.31",
+  "matplotlib>=3.10",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["holdshort_research"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

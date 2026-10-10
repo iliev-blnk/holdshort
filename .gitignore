@@ -15,3 +15,6 @@ console/test-results/
 console/playwright-report/
 console/dist-fixture/
 console/.basemap/
+research/.venv/
+__pycache__/
+*.egg-info/
