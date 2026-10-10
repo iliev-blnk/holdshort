@@ -5,6 +5,7 @@ pub mod classify;
 pub mod config;
 pub mod day;
 pub mod detect;
+pub mod features;
 pub mod flights;
 pub mod geo;
 pub mod height;
