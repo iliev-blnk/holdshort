@@ -8,7 +8,9 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build:fixture": "VITE_DATA_BASE=fixture VITE_BASEMAP=none vite build --outDir dist-fixture --emptyOutDir && rm -rf dist-fixture/data dist-fixture/basemap && cp -r test/fixture dist-fixture/fixture",
+    "e2e": "playwright test"
   },
   "dependencies": {
     "@deck.gl/core": "^9.4.0",
