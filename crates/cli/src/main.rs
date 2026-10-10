@@ -57,6 +57,12 @@ enum Cmd {
     Live,
     /// Turn compacted days into flights, events and runway bins.
     Twin { range: String },
+    /// Write twin days as static files for the console (and rebuild index.json).
+    Export {
+        range: String,
+        #[arg(long, default_value = "console/public/data")]
+        out: String,
+    },
     /// Sanity report over twin results, plus random flights to review by hand.
     TwinCheck {
         range: String,
@@ -150,6 +156,21 @@ fn run(cli: Cli) -> anyhow::Result<bool> {
                     });
                     report(format!("{} {day}", a.icao), r);
                 }
+            }
+        }
+        Cmd::Export { range, out } => {
+            let out = std::path::Path::new(&out);
+            for day in dates::parse_range(&range)? {
+                for a in &airports {
+                    report(
+                        format!("{} {day}", a.icao),
+                        export::run_day(&store, a, day, out),
+                    );
+                }
+            }
+            for a in &airports {
+                let n = export::write_index(out, a.icao)?;
+                println!("index {}: {n} days", a.icao);
             }
         }
         Cmd::TwinCheck {

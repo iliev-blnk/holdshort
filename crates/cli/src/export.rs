@@ -4,17 +4,19 @@
 //! movements histogram; `tracks.bin` holds every position as little-endian
 //! columns the browser reads straight into typed arrays.
 
-// Wired into the CLI by the `export` command (next commit).
-#![allow(dead_code)]
-
 use std::collections::HashMap;
+use std::path::Path;
 
 #[cfg(test)]
 use anyhow::{bail, ensure};
 use chrono::NaiveDate;
 use holdshort_core::Obs;
+use holdshort_core::airport::Airport;
 use holdshort_twin::day::DayTwin;
 use serde::{Deserialize, Serialize};
+
+use crate::store::Store;
+use crate::twin::compute_day;
 
 pub const MAGIC: &[u8; 4] = b"HSTK";
 pub const VERSION: u32 = 1;
@@ -250,6 +252,92 @@ fn encode_tracks(tr: &Tracks) -> Vec<u8> {
             .for_each(|v| b.extend_from_slice(&v.to_le_bytes()));
     }
     b
+}
+
+/// Write `<out>/<airport>/<date>/{day.json,tracks.bin}`.
+pub fn write_day(
+    out: &Path,
+    airport: &str,
+    date: &str,
+    json: &DayJson,
+    tracks: &[u8],
+) -> anyhow::Result<()> {
+    let dir = out.join(airport).join(date);
+    std::fs::create_dir_all(&dir)?;
+    std::fs::write(dir.join("day.json"), serde_json::to_vec(json)?)?;
+    std::fs::write(dir.join("tracks.bin"), tracks)?;
+    Ok(())
+}
+
+/// Export one airport-day; returns a one-line summary.
+pub fn run_day(
+    store: &Store,
+    ap: &'static Airport,
+    day: NaiveDate,
+    out: &Path,
+) -> anyhow::Result<String> {
+    let (twin, obs, _) = compute_day(store, ap, day)?;
+    let (json, tracks) = build(ap.icao, day, &twin, &obs);
+    write_day(out, ap.icao, &day.to_string(), &json, &tracks)?;
+    let points = (tracks.len() - HEADER) / 18;
+    Ok(format!(
+        "{} flights, {points} points, {} KB",
+        json.flights.len(),
+        tracks.len() / 1024
+    ))
+}
+
+#[derive(Serialize)]
+struct IndexJ {
+    v: u32,
+    airport: String,
+    days: Vec<DaySummaryJ>,
+}
+
+#[derive(Serialize)]
+struct DaySummaryJ {
+    date: String,
+    arrivals: usize,
+    departures: usize,
+    go_arounds: u32,
+    asma_median_s: Option<i64>,
+}
+
+/// Rebuild `<out>/index.json` from every exported day of `airport`.
+pub fn write_index(out: &Path, airport: &str) -> anyhow::Result<usize> {
+    let mut days = Vec::new();
+    let dir = out.join(airport);
+    for entry in std::fs::read_dir(&dir)? {
+        let path = entry?.path().join("day.json");
+        if !path.exists() {
+            continue;
+        }
+        let j: DayJson = serde_json::from_slice(&std::fs::read(&path)?)?;
+        let count = |kinds: [&str; 2]| {
+            j.flights
+                .iter()
+                .filter(|f| kinds.contains(&f.kind.as_str()))
+                .count()
+        };
+        let mut asma: Vec<i64> = j.flights.iter().filter_map(|f| f.asma_s).collect();
+        asma.sort_unstable();
+        days.push(DaySummaryJ {
+            date: j.date.clone(),
+            arrivals: count(["arrival", "both"]),
+            departures: count(["departure", "both"]),
+            go_arounds: j.flights.iter().map(|f| f.ga).sum(),
+            asma_median_s: asma.get(asma.len() / 2).copied(),
+        });
+    }
+    days.sort_by(|a, b| a.date.cmp(&b.date));
+    let n = days.len();
+    let idx = IndexJ {
+        v: 1,
+        airport: airport.into(),
+        days,
+    };
+    std::fs::write(out.join("index.json"), serde_json::to_vec(&idx)?)?;
+    Ok(n)
 }
 
 #[cfg(test)]
@@ -595,5 +683,179 @@ mod tests {
         let mut b = build("LTFM", day(), &tw, &o).1;
         b[4] = 2;
         assert!(decode_tracks(&b).is_err());
+    }
+
+    /// The committed console fixture: one arrival to 35R, one departure
+    /// first seen high (no runway), one overflight, one configuration.
+    fn fixture_day() -> (DayTwin, Vec<Obs>) {
+        let at = |h: i64, m: i64| START + (h * 60 + m) * MIN;
+        let mut o = Vec::new();
+        // THY1: 35R final, 06:02–06:12, 3,200 ft → 400 ft.
+        for k in 0..11 {
+            let nm = 10.0 - k as f64;
+            let mut p = obs(
+                "4bb208",
+                at(6, 2) + k * MIN,
+                41.26192 - nm / 60.0,
+                28.72776,
+                Some((400.0 + nm * 280.0) as i32),
+                None,
+                Some(359.0),
+                Some(150.0),
+            );
+            p.flight = Some("THY1".into());
+            o.push(p);
+        }
+        // PGT2: first seen at 9,000 ft, 06:09–06:18, climbing north.
+        for k in 0..10 {
+            let mut p = obs(
+                "4ba9c1",
+                at(6, 9) + k * MIN,
+                41.40 + k as f64 * 0.06,
+                28.74,
+                Some(9000 + k as i32 * 1500),
+                None,
+                Some(2.0),
+                Some(300.0),
+            );
+            p.flight = Some("PGT2".into());
+            o.push(p);
+        }
+        // UAE3: overflight at FL360, west to east, 06:00–06:30.
+        for k in 0..11 {
+            let mut p = obs(
+                "896180",
+                at(6, 0) + k * 3 * MIN,
+                41.60,
+                28.00 + k as f64 * 0.14,
+                Some(36000),
+                None,
+                Some(90.0),
+                Some(480.0),
+            );
+            p.flight = Some("UAE3".into());
+            o.push(p);
+        }
+        let mut thy = flight("4bb208-1", "4bb208", at(6, 2), at(6, 12), Kind::Arrival);
+        thy.flight = Some("THY1".into());
+        thy.ac_type = Some("A321".into());
+        thy.reg = Some("TC-JRA".into());
+        thy.arr_runway = Some("35R".into());
+        thy.touchdown_ms = Some(at(6, 12) + 20_000);
+        thy.asma_entry_ms = Some(at(5, 57) + 20_000);
+        thy.asma_s = Some(900.0);
+        let mut pgt = flight("4ba9c1-1", "4ba9c1", at(6, 9), at(6, 18), Kind::Departure);
+        pgt.flight = Some("PGT2".into());
+        pgt.ac_type = Some("B738".into());
+        pgt.reg = Some("TC-CPA".into());
+        pgt.liftoff_ms = Some(at(6, 8));
+        pgt.time_low_confidence = true;
+        let mut uae = flight("896180-1", "896180", at(6, 0), at(6, 30), Kind::Overflight);
+        uae.flight = Some("UAE3".into());
+        uae.ac_type = Some("A388".into());
+        uae.reg = Some("A6-EOA".into());
+        let mut td = event(Some("4bb208-1"), at(6, 12) + 20_000, EventKind::Touchdown);
+        td.runway = Some("35R".into());
+        td.lat = Some(41.2646);
+        td.lon = Some(28.7277);
+        let lo = event(Some("4ba9c1-1"), at(6, 8), EventKind::Liftoff);
+        let mut cfg = event(None, at(6, 10), EventKind::ConfigChange);
+        cfg.detail = Some("ARR 35R / DEP -".into());
+        let bins = vec![Bin {
+            bin_ms: at(6, 10),
+            runway: "35R".into(),
+            arrivals: 1,
+            departures: 0,
+            config: "ARR 35R / DEP -".into(),
+        }];
+        (twin(vec![thy, pgt, uae], vec![lo, cfg, td], bins), o)
+    }
+
+    fn write_day_json(dir: &std::path::Path, date: &str, asma: &[Option<i64>]) {
+        let flights = asma
+            .iter()
+            .enumerate()
+            .map(|(i, a)| FlightJ {
+                id: format!("f{i}"),
+                cs: None,
+                ac_type: None,
+                reg: None,
+                kind: if a.is_some() { "arrival" } else { "departure" }.into(),
+                arr_rwy: None,
+                td: None,
+                dep_rwy: None,
+                lo: None,
+                low: false,
+                asma_s: *a,
+                ga: 0,
+                holds: 0,
+                hold_s: 0,
+                p: [0, 0],
+            })
+            .collect();
+        let j = DayJson {
+            v: 1,
+            airport: "LTFM".into(),
+            date: date.into(),
+            day_start_ms: 0,
+            flights,
+            events: vec![],
+            config: vec![],
+            hist: HistJ {
+                bin_s: 600,
+                arr: vec![],
+                dep: vec![],
+            },
+        };
+        write_day(dir, "LTFM", date, &j, &[]).unwrap();
+    }
+
+    #[test]
+    fn index_lists_days_sorted_with_medians() {
+        let dir = tempfile::tempdir().unwrap();
+        write_day_json(dir.path(), "2026-10-03", &[Some(600)]);
+        write_day_json(
+            dir.path(),
+            "2026-10-02",
+            &[Some(1200), None, Some(600), Some(900)],
+        );
+        assert_eq!(write_index(dir.path(), "LTFM").unwrap(), 2);
+        let idx: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(dir.path().join("index.json")).unwrap()).unwrap();
+        assert_eq!(idx["airport"], "LTFM");
+        assert_eq!(idx["days"][0]["date"], "2026-10-02");
+        assert_eq!(idx["days"][0]["arrivals"], 3);
+        assert_eq!(idx["days"][0]["departures"], 1);
+        assert_eq!(idx["days"][0]["asma_median_s"], 900);
+        assert_eq!(idx["days"][1]["date"], "2026-10-03");
+    }
+
+    #[test]
+    fn fixture_matches_committed_files() {
+        let fixture = std::path::Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../console/test/fixture"
+        ));
+        let (tw, o) = fixture_day();
+        let (j, bin) = build("LTFM", day(), &tw, &o);
+        let tmp = tempfile::tempdir().unwrap();
+        write_day(tmp.path(), "LTFM", "2026-10-02", &j, &bin).unwrap();
+        write_index(tmp.path(), "LTFM").unwrap();
+        for rel in [
+            "index.json",
+            "LTFM/2026-10-02/day.json",
+            "LTFM/2026-10-02/tracks.bin",
+        ] {
+            let got = std::fs::read(tmp.path().join(rel)).unwrap();
+            let path = fixture.join(rel);
+            if std::env::var("UPDATE_FIXTURE").is_ok() {
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(&path, &got).unwrap();
+            } else {
+                let want = std::fs::read(&path)
+                    .unwrap_or_else(|_| panic!("missing {rel}; run with UPDATE_FIXTURE=1"));
+                assert!(got == want, "{rel} differs from the committed fixture");
+            }
+        }
     }
 }

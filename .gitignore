@@ -8,3 +8,5 @@ node_modules/
 out/
 .superpowers/
 data/
+console/public/data/
+console/public/basemap/
