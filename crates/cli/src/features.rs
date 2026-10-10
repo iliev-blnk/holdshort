@@ -98,7 +98,7 @@ pub fn run_day(store: &Store, ap: &'static Airport, day: NaiveDate) -> anyhow::R
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::compact::obs_key;
     use crate::parquet_io::obs_parquet;
@@ -112,12 +112,12 @@ mod tests {
     use holdshort_twin::geo::{NM_M, from_runway};
     use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 
-    fn day() -> NaiveDate {
+    pub(crate) fn day() -> NaiveDate {
         NaiveDate::from_ymd_opt(2026, 10, 8).unwrap()
     }
 
     /// A straight-in 3° approach to 35L from 45 nm (crosses the 40 nm ring), 5 s steps, from 01:00.
-    fn long_approach() -> Vec<Obs> {
+    pub(crate) fn long_approach() -> Vec<Obs> {
         let r = LTFM.runways.iter().find(|r| r.name == "35L").unwrap();
         let t0 = 1_791_417_600_000 + 3_600_000;
         let step = 140.0 * NM_M / 3600.0 * 5.0;

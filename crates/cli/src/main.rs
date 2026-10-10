@@ -7,6 +7,7 @@ mod dates;
 mod export;
 mod features;
 mod filter;
+mod forecast;
 mod history_fetch;
 mod live;
 mod parquet_io;
@@ -60,6 +61,12 @@ enum Cmd {
     Twin { range: String },
     /// Write the forecasting models' feature tables (eta.parquet, hourly.parquet).
     Features { range: String },
+    /// Run the forecasting models over feature tables and compare them with baselines.
+    ForecastCheck {
+        range: String,
+        #[arg(long, default_value = "models")]
+        models: String,
+    },
     /// Write twin days as static files for the console (and rebuild index.json).
     Export {
         range: String,
@@ -167,6 +174,25 @@ fn run(cli: Cli) -> anyhow::Result<bool> {
                     report(
                         format!("{} {day}", a.icao),
                         features::run_day(&store, a, day),
+                    );
+                }
+            }
+        }
+        Cmd::ForecastCheck { range, models } => {
+            let days = dates::parse_range(&range)?;
+            for a in &airports {
+                let r = forecast::check(&store, a, &days, std::path::Path::new(&models))?;
+                println!(
+                    "{} landing time: {} arrivals, model MAE {:.2} min, global median {:.2} min",
+                    a.icao,
+                    r.eta.n,
+                    r.eta.model_mae_s / 60.0,
+                    r.eta.baseline_mae_s / 60.0
+                );
+                for h in &r.hourly {
+                    println!(
+                        "{} arrivals/hour h={}: {} hours, model MAE {:.2}, last hour {:.2}",
+                        a.icao, h.horizon, h.n, h.model_mae, h.baseline_mae
                     );
                 }
             }

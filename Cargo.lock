@@ -890,6 +890,7 @@ dependencies = [
  "flate2",
  "futures",
  "holdshort-core",
+ "holdshort-models",
  "holdshort-twin",
  "object_store",
  "parquet",
