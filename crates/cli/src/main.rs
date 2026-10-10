@@ -5,6 +5,7 @@ mod check;
 mod compact;
 mod dates;
 mod export;
+mod features;
 mod filter;
 mod history_fetch;
 mod live;
@@ -57,6 +58,8 @@ enum Cmd {
     Live,
     /// Turn compacted days into flights, events and runway bins.
     Twin { range: String },
+    /// Write the forecasting models' feature tables (eta.parquet, hourly.parquet).
+    Features { range: String },
     /// Write twin days as static files for the console (and rebuild index.json).
     Export {
         range: String,
@@ -155,6 +158,16 @@ fn run(cli: Cli) -> anyhow::Result<bool> {
                         )
                     });
                     report(format!("{} {day}", a.icao), r);
+                }
+            }
+        }
+        Cmd::Features { range } => {
+            for day in dates::parse_range(&range)? {
+                for a in &airports {
+                    report(
+                        format!("{} {day}", a.icao),
+                        features::run_day(&store, a, day),
+                    );
                 }
             }
         }

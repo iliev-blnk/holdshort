@@ -25,7 +25,7 @@ fn src_name(s: Src) -> &'static str {
     }
 }
 
-fn write(columns: Vec<(&str, ArrayRef)>) -> anyhow::Result<Vec<u8>> {
+pub(crate) fn write(columns: Vec<(&str, ArrayRef)>) -> anyhow::Result<Vec<u8>> {
     let batch = RecordBatch::try_from_iter(columns)?;
     let props = WriterProperties::builder()
         .set_compression(Compression::ZSTD(ZstdLevel::try_new(3)?))
