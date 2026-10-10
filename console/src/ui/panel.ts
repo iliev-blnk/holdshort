@@ -1,13 +1,14 @@
 import type { DayJson } from '../data/types';
 import type { SimState } from '../sim/state';
-import { T } from '../theme';
-import { eventText, hhmm, minutes } from './format';
+import { feedChange, feedRow } from './feed';
+import { hhmm, minutes } from './format';
 
 const MAX_ROWS = 200;
-const DOT: Record<string, string> = { touchdown: T.arr, liftoff: T.dep, go_around: T.text, hold_start: T.muted, config_change: T.muted };
 
 export interface Panel {
   update(state: SimState, day: DayJson, tMs: number): void;
+  /** Show nothing (e.g. while no day is loaded). */
+  clear(): void;
 }
 
 export function mountPanel(el: HTMLElement, onEvent: (i: number) => void): Panel {
@@ -38,14 +39,27 @@ export function mountPanel(el: HTMLElement, onEvent: (i: number) => void): Panel
     const open = el.classList.toggle('open');
     now.setAttribute('aria-expanded', String(open));
   });
-  feed.addEventListener('click', (e) => {
+  // pointerdown, not click: rows shift as new events arrive at high speed,
+  // so a press and its release can land on different rows.
+  feed.addEventListener('pointerdown', (e) => {
     const li = (e.target as HTMLElement).closest<HTMLLIElement>('li[data-i]');
     if (li) onEvent(Number(li.dataset.i));
   });
 
-  let shownDay: DayJson | null = null;
-  let shownCount = -1;
   let shownMinute = -1;
+  let shown: { day: DayJson | null; count: number } = { day: null, count: 0 };
+  let ga = 0;
+
+  const rowsFor = (events: number[], day: DayJson) => {
+    const rows: string[] = [];
+    for (const i of events) {
+      if (rows.length >= MAX_ROWS) break;
+      const r = feedRow(i, day.events[i], day);
+      if (r !== null) rows.push(r);
+    }
+    return rows.join('');
+  };
+  const countGa = (events: number[], day: DayJson) => events.filter((i) => day.events[i].kind === 'go_around').length;
 
   return {
     update(state, day, tMs) {
@@ -57,24 +71,32 @@ export function mountPanel(el: HTMLElement, onEvent: (i: number) => void): Panel
       config.textContent = state.config || '—';
       sHour.textContent = String(state.lastHour);
       sAsma.textContent = minutes(state.asmaMedianS);
-      if (day === shownDay && state.events.length === shownCount) return;
-      shownDay = day;
-      shownCount = state.events.length;
-      let ga = 0;
-      const rows: string[] = [];
-      for (const i of state.events) {
-        const e = day.events[i];
-        if (e.kind === 'go_around') ga++;
-        if (rows.length >= MAX_ROWS) continue;
-        const text = eventText(e, day);
-        if (text === null) continue;
-        const low = e.f !== null && day.flights[e.f].low && (e.kind === 'touchdown' || e.kind === 'liftoff');
-        rows.push(
-          `<li data-i="${i}"><i style="background:${DOT[e.kind]}"></i><time>${hhmm(e.t)}</time><span>${text}${low ? ' <em>est.</em>' : ''}</span></li>`,
-        );
+      const change = feedChange(shown, day, state.events.length);
+      if (change === 'none') return;
+      if (change === 'rebuild') {
+        feed.innerHTML = rowsFor(state.events, day);
+        ga = countGa(state.events, day);
+      } else {
+        const fresh = state.events.slice(0, change.added);
+        const html = rowsFor(fresh, day);
+        if (html) {
+          feed.insertAdjacentHTML('afterbegin', html);
+          while (feed.children.length > MAX_ROWS) feed.lastElementChild!.remove();
+        }
+        ga += countGa(fresh, day);
       }
       sGa.textContent = String(ga);
-      feed.innerHTML = rows.join('');
+      shown = { day, count: state.events.length };
+    },
+    clear() {
+      shown = { day: null, count: 0 };
+      ga = 0;
+      shownMinute = -1;
+      feed.innerHTML = '';
+      config.textContent = '—';
+      sHour.textContent = '0';
+      sAsma.textContent = minutes(null);
+      sGa.textContent = '0';
     },
   };
 }

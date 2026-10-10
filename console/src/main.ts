@@ -107,6 +107,7 @@ async function main() {
       day = tracks = null;
       select(null);
       timeline.setDay(empty);
+      panel.clear();
       showNotice('This day could not be loaded.');
       return;
     }
