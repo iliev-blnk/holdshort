@@ -1,0 +1,55 @@
+:root {
+  --water: #1b1f24;
+  --land: #262b31;
+  --coast: #343b43;
+  --ui: #20252b;
+  --line: #323940;
+  --text: #e6e9ec;
+  --muted: #8d97a1;
+  --arr: #5aa9ff;
+  --dep: #ff9f43;
+  --ovf: #6b7580;
+  --oth: #4a535c;
+  --sans: 'Inter', system-ui, sans-serif;
+  --mono: 'JetBrains Mono', ui-monospace, monospace;
+  --top: 44px;
+  --panel: 300px;
+  --timeline: 116px;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--water);
+  color: var(--text);
+  font: 13px/1.4 var(--sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+#app {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  grid-template: var(--top) 1fr var(--timeline) / 1fr var(--panel);
+  grid-template-areas: 'top top' 'map panel' 'timeline timeline';
+}
+
+#map {
+  grid-area: map;
+  position: relative;
+  min-height: 0;
+}
+
+.maplibregl-ctrl-attrib {
+  background: rgba(32, 37, 43, 0.8) !important;
+  color: var(--muted);
+}
+.maplibregl-ctrl-attrib a {
+  color: var(--muted);
+}
