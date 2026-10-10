@@ -154,3 +154,203 @@ body {
   min-height: 0;
   overflow: hidden;
 }
+
+/* Side panel */
+#panel {
+  display: flex;
+  flex-direction: column;
+  padding: 14px 16px 10px;
+  gap: 10px;
+}
+#panel .label {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+#panel .now {
+  all: unset;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  cursor: default;
+}
+#panel .clock,
+#panel .config,
+#panel dd,
+#panel time {
+  font-family: var(--mono);
+}
+#panel .config {
+  font-size: 15px;
+  font-weight: 600;
+}
+#panel .stats {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 8px;
+  margin: 0;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+#panel dt {
+  color: var(--muted);
+}
+#panel dd {
+  margin: 0;
+  text-align: right;
+}
+#panel .feed {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+#panel .feed li {
+  display: grid;
+  grid-template-columns: 10px 44px 1fr;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 4px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+#panel .feed li:hover {
+  background: var(--line);
+}
+#panel .feed i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+#panel .feed time {
+  color: var(--muted);
+}
+#panel em {
+  font-style: normal;
+  font-size: 10px;
+  color: var(--muted);
+}
+#panel .note {
+  margin: 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* Flight card and notices, floating on the map */
+.card {
+  position: absolute;
+  z-index: 2;
+  top: 12px;
+  left: 12px;
+  width: 250px;
+  padding: 12px 14px;
+  background: var(--ui);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.card .close {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  background: none;
+  border: 0;
+  color: var(--muted);
+  font-size: 18px;
+  cursor: pointer;
+}
+.card .cs {
+  font: 600 16px var(--mono);
+}
+.card .sub {
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.card dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 10px;
+  margin: 0;
+}
+.card dt {
+  color: var(--muted);
+}
+.card dd {
+  margin: 0;
+  font-family: var(--mono);
+}
+.card .badge {
+  display: inline-block;
+  font: 10px var(--sans);
+  color: var(--dep);
+  border: 1px solid var(--dep);
+  border-radius: 3px;
+  padding: 0 4px;
+  margin-left: 4px;
+}
+.notice {
+  position: absolute;
+  z-index: 2;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  padding: 12px 16px;
+  background: var(--ui);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.message {
+  grid-column: 1 / -1;
+  grid-row: 1 / -1;
+  display: grid;
+  place-content: center;
+  text-align: center;
+  color: var(--muted);
+}
+.message a {
+  color: var(--arr);
+}
+
+/* Phones: the panel becomes a bottom sheet over the map. */
+@media (max-width: 719px) {
+  :root {
+    --timeline: 104px;
+  }
+  #app {
+    grid-template: var(--top) 1fr var(--timeline) / 1fr;
+    grid-template-areas: 'top' 'map' 'timeline';
+  }
+  #top .caption {
+    display: none;
+  }
+  #top {
+    justify-content: space-between;
+  }
+  #panel {
+    position: fixed;
+    z-index: 3;
+    left: 0;
+    right: 0;
+    bottom: var(--timeline);
+    max-height: 60vh;
+    border-left: 0;
+    border-top: 1px solid var(--line);
+    border-radius: 10px 10px 0 0;
+    padding: 10px 16px;
+  }
+  #panel .now {
+    cursor: pointer;
+  }
+  #panel:not(.open) > :not(.now) {
+    display: none;
+  }
+  .card {
+    width: auto;
+    right: 12px;
+  }
+  .tl-controls {
+    width: 60px;
+  }
+}
