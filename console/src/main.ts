@@ -16,7 +16,7 @@ import { mountTopbar } from './ui/topbar';
 import { readUrl, selectFromUrl, writeUrl } from './ui/url';
 
 const DATA = import.meta.env.VITE_DATA_BASE ?? 'data';
-const BASEMAP = import.meta.env.VITE_BASEMAP ?? 'basemap/istanbul.pmtiles';
+const BASEMAP = import.meta.env.VITE_BASEMAP ?? 'basemap/tiles.json';
 const DEFAULT_DAY = '2026-10-02';
 /** 10:00 UTC: the busiest hour in coverage (about 32 aircraft in view). */
 const DEFAULT_START_MS = 36_000_000;
@@ -59,6 +59,8 @@ async function main() {
     notice.textContent = text ?? '';
   };
 
+  // The map and the day's data load in parallel.
+  const mapReady = createMap(document.getElementById('map')!, BASEMAP);
   let loaded: { day: DayJson; tracks: Tracks } | null = null;
   try {
     loaded = await loadDay(DATA, airport, date);
@@ -68,7 +70,7 @@ async function main() {
   let day: DayJson | null = loaded?.day ?? null;
   let tracks: Tracks | null = loaded?.tracks ?? null;
 
-  const map = await createMap(document.getElementById('map')!, BASEMAP);
+  const map = await mapReady;
   const overlay = new MapboxOverlay({ interleaved: false, layers: [] });
   map.addControl(overlay);
 

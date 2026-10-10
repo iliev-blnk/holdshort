@@ -5,6 +5,21 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="Istanbul Airport, rebuilt from open ADS-B data: a replay of every flight, runway and go-around." />
     <title>holdshort · Istanbul Airport replay</title>
+    <script>
+      // Start downloading the day's data while the app bundle loads (must match main.ts defaults).
+      (function () {
+        var m = /[?&]d=(\d{4}-\d{2}-\d{2})/.exec(location.search);
+        var dir = 'data/LTFM/' + (m ? m[1] : '2026-10-02') + '/';
+        ['data/index.json', dir + 'day.json', dir + 'tracks.bin.gz'].forEach(function (href) {
+          var l = document.createElement('link');
+          l.rel = 'preload';
+          l.as = 'fetch';
+          l.crossOrigin = 'anonymous';
+          l.href = href;
+          document.head.appendChild(l);
+        });
+      })();
+    </script>
   </head>
   <body>
     <div id="app"></div>

@@ -1,14 +1,11 @@
 import { layers, namedFlavor, type Flavor } from '@protomaps/basemaps';
-import { Map as MapLibre, type StyleSpecification, addProtocol, setWorkerUrl } from 'maplibre-gl';
+import { Map as MapLibre, type StyleSpecification, setWorkerUrl } from 'maplibre-gl';
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { Protocol } from 'pmtiles';
 import { LTFM } from '../geo/ltfm';
 import { T } from '../theme';
 
 export const ATTRIBUTION = '© OpenStreetMap contributors · Protomaps';
-
-let protocolAdded = false;
 
 // MapLibre 6 loads its worker as a separate module; let Vite bundle and point at it.
 setWorkerUrl(workerUrl);
@@ -40,22 +37,23 @@ function plainStyle(): StyleSpecification {
   };
 }
 
+/** Style for the unpacked tiles described by `tiles.json` (see scripts/basemap-tiles.mjs). */
 async function basemapStyle(url: string): Promise<StyleSpecification> {
   if (url === 'none') return plainStyle();
-  const abs = new URL(url, location.href).href;
+  const abs = new URL(url, location.href);
+  let tj: { minzoom: number; maxzoom: number; bounds: [number, number, number, number] };
   try {
-    const r = await fetch(abs, { headers: { Range: 'bytes=0-127' } });
+    const r = await fetch(abs);
     if (!r.ok) return plainStyle();
+    tj = await r.json();
   } catch {
     return plainStyle();
   }
-  if (!protocolAdded) {
-    addProtocol('pmtiles', new Protocol().tile);
-    protocolAdded = true;
-  }
+  // MapLibre needs an absolute template; keep {z}/{x}/{y} unescaped.
+  const tiles = `${new URL('tiles/', abs).href}{z}/{x}/{y}.pbf`;
   return {
     version: 8,
-    sources: { protomaps: { type: 'vector', url: `pmtiles://${abs}`, attribution: ATTRIBUTION } },
+    sources: { protomaps: { type: 'vector', tiles: [tiles], minzoom: tj.minzoom, maxzoom: tj.maxzoom, bounds: tj.bounds, attribution: ATTRIBUTION } },
     layers: layers('protomaps', slate()),
   };
 }

@@ -14,3 +14,4 @@ console/dist/
 console/test-results/
 console/playwright-report/
 console/dist-fixture/
+console/.basemap/
