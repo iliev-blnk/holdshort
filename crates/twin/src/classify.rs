@@ -13,6 +13,13 @@ const MAX_CROSS_M: f64 = 1_500.0;
 const LOW_FT: f64 = 2_000.0;
 const END_FT: f64 = 1_500.0;
 const MIN_POINTS: usize = 3;
+/// Approaches lost on final: the run near the runway starts below this…
+const LOST_LOW_FT: f64 = 4_000.0;
+/// …and the last point must be below this, within 10 nm.
+const LOST_END_FT: f64 = 2_500.0;
+const LOST_NM: f64 = 10.0;
+/// Descent the aligned points must show, so level traffic is not an arrival.
+const LOST_MIN_DESCENT_FT: f64 = 200.0;
 const OVERFLIGHT_FT: f64 = 5_000.0;
 const HIGH_DEP_NM: f64 = 25.0;
 const HIGH_DEP_FT: f64 = 20_000.0;
@@ -80,22 +87,23 @@ fn fit(
     wx: &Weather,
     order: &[usize],
     along: (f64, f64),
+    (low_ft, end_ft): (f64, f64),
 ) -> Option<Fit> {
     let mut cands = Vec::new();
     for r in ap.runways {
         // The run of points near the runway: from the end (or start) of the
-        // flight while lower than 2,000 ft above this runway.
+        // flight while lower than `low_ft` above this runway.
         // Points without a usable height are skipped, not treated as high.
         let low: Vec<usize> = order
             .iter()
             .copied()
             .filter(|&i| height(&t.points[i], wx, r).is_some())
-            .take_while(|&i| height(&t.points[i], wx, r).is_some_and(|h| h < LOW_FT))
+            .take_while(|&i| height(&t.points[i], wx, r).is_some_and(|h| h < low_ft))
             .collect();
         let edge_ok = low
             .first()
             .and_then(|&i| height(&t.points[i], wx, r))
-            .is_some_and(|h| h < END_FT);
+            .is_some_and(|h| h < end_ft);
         if !edge_ok {
             continue;
         }
@@ -115,16 +123,33 @@ fn fit(
     best(cands)
 }
 
-/// The runway this flight landed on, judged from its last points.
+/// The runway this flight landed on, judged from its last points. A flight
+/// that coverage loses on final (still descending, below 2,500 ft, within
+/// 10 nm) also counts: its touchdown is then far from the last point, so it
+/// comes out low-confidence.
 pub fn arrival_fit(t: &Track, ap: &'static Airport, wx: &Weather) -> Option<Fit> {
     let order: Vec<usize> = (0..t.points.len()).rev().collect();
-    fit(t, ap, wx, &order, (-6.0 * NM_M, 1_000.0))
+    fit(t, ap, wx, &order, (-6.0 * NM_M, 1_000.0), (LOW_FT, END_FT)).or_else(|| {
+        let f = fit(
+            t,
+            ap,
+            wx,
+            &order,
+            (-LOST_NM * NM_M, 1_000.0),
+            (LOST_LOW_FT, LOST_END_FT),
+        )?;
+        let h = |i: usize| height(&t.points[i], wx, f.runway);
+        // The track must end on final, not after breaking off.
+        let end = order.iter().copied().find(|&i| h(i).is_some())?;
+        let (first, last) = (h(*f.idx.first()?)?, h(*f.idx.last()?)?);
+        (f.idx.contains(&end) && first - last >= LOST_MIN_DESCENT_FT).then_some(f)
+    })
 }
 
 /// The runway this flight took off from, judged from its first points.
 pub fn departure_fit(t: &Track, ap: &'static Airport, wx: &Weather) -> Option<Fit> {
     let order: Vec<usize> = (0..t.points.len()).collect();
-    fit(t, ap, wx, &order, (0.0, 8.0 * NM_M))
+    fit(t, ap, wx, &order, (0.0, 8.0 * NM_M), (LOW_FT, END_FT))
 }
 
 /// Every point has a height, and all are at least 5,000 ft above the airport.
@@ -345,6 +370,68 @@ mod tests {
         let mut t = high_departure();
         no_height(&mut t.points[0]);
         assert!(departs_seen_high(&t, &LTFM, &no_wx()));
+    }
+
+    /// An approach that coverage loses `lost_nm` before the threshold.
+    fn lost_at(r: &RunwayEnd, lost_nm: f64) -> Vec<holdshort_core::Obs> {
+        approach(r, 0.0, 15.0, 0)
+            .into_iter()
+            .filter(|p| to_runway(r, p.lat, p.lon).along_m <= -lost_nm * NM_M)
+            .collect()
+    }
+
+    #[test]
+    fn lost_on_final_is_an_arrival() {
+        // Seen down to ~1,900 ft, 6 nm out: typical of runway 36.
+        let t = track(lost_at(rwy("36"), 6.0));
+        let fit = arrival_fit(&t, &LTFM, &no_wx()).expect("arrival");
+        assert_eq!(fit.runway.name, "36");
+    }
+
+    #[test]
+    fn lost_on_final_touchdown_is_low_confidence() {
+        let t = track(lost_at(rwy("36"), 6.0));
+        let fit = arrival_fit(&t, &LTFM, &no_wx()).unwrap();
+        assert!(crate::detect::touchdown(&t, &fit).1);
+    }
+
+    #[test]
+    fn lost_high_on_final_is_not_an_arrival() {
+        // Last seen ~2,700 ft above the runway, 8.5 nm out: too far to call.
+        let t = track(lost_at(rwy("36"), 8.5));
+        assert!(arrival_fit(&t, &LTFM, &no_wx()).is_none());
+    }
+
+    #[test]
+    fn broken_off_approach_is_not_lost_on_final() {
+        // Down to ~1,900 ft 6 nm out, then turned east and climbed before
+        // coverage ends: it did not land.
+        let mut pts = lost_at(rwy("36"), 6.0);
+        let last = pts.last().unwrap().clone();
+        let alt0 = last.alt_baro_ft.unwrap() as f64;
+        for k in 1..=6 {
+            pts.push(crate::testkit::point(
+                last.ts_ms + k * 5_000,
+                last.lat,
+                last.lon + k as f64 * 0.003,
+                alt0 + k as f64 * 80.0,
+                160.0,
+                90.0,
+                1_000.0,
+            ));
+        }
+        assert!(arrival_fit(&track(pts), &LTFM, &no_wx()).is_none());
+    }
+
+    #[test]
+    fn level_on_the_centreline_is_not_lost_on_final() {
+        let mut pts = lost_at(rwy("35R"), 6.0);
+        for p in &mut pts {
+            p.alt_baro_ft = Some(2_200);
+            p.alt_geom_ft = Some(2_200);
+            p.vrate_fpm = Some(0);
+        }
+        assert!(arrival_fit(&track(pts), &LTFM, &no_wx()).is_none());
     }
 
     #[test]
