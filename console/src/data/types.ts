@@ -34,6 +34,8 @@ export interface FlightJ {
   hold_s: number;
   /** First point and point count in tracks.bin. */
   p: [number, number];
+  /** Landing time predicted at the 40 nm ring, seconds after entry (null without a prediction). */
+  eta_s: number | null;
 }
 
 export interface EventJ {

@@ -72,6 +72,9 @@ enum Cmd {
         range: String,
         #[arg(long, default_value = "console/public/data")]
         out: String,
+        /// Add the landing time predicted at 40 nm (models/ from research).
+        #[arg(long)]
+        models: Option<String>,
     },
     /// Sanity report over twin results, plus random flights to review by hand.
     TwinCheck {
@@ -197,13 +200,19 @@ fn run(cli: Cli) -> anyhow::Result<bool> {
                 }
             }
         }
-        Cmd::Export { range, out } => {
+        Cmd::Export { range, out, models } => {
             let out = std::path::Path::new(&out);
             for day in dates::parse_range(&range)? {
                 for a in &airports {
                     report(
                         format!("{} {day}", a.icao),
-                        export::run_day(&store, a, day, out),
+                        export::run_day(
+                            &store,
+                            a,
+                            day,
+                            out,
+                            models.as_deref().map(std::path::Path::new),
+                        ),
                     );
                 }
             }

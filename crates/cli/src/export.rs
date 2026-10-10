@@ -18,6 +18,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::store::Store;
 use crate::twin::compute_day;
+use holdshort_models::EtaModel;
+use holdshort_twin::features::eta_rows;
+use holdshort_twin::height::Weather;
 
 pub const MAGIC: &[u8; 4] = b"HSTK";
 pub const VERSION: u32 = 1;
@@ -59,6 +62,8 @@ pub struct FlightJ {
     pub hold_s: i64,
     /// First point and point count in `tracks.bin`.
     pub p: [u32; 2],
+    /// Landing time predicted at the 40 nm ring, seconds after entry (with `--models`).
+    pub eta_s: Option<i64>,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
@@ -167,6 +172,7 @@ pub fn build(airport: &str, day: NaiveDate, twin: &DayTwin, obs: &[Obs]) -> (Day
             holds: f.holds,
             hold_s: f.holding_s.round() as i64,
             p: [first, tr.t.len() as u32 - first],
+            eta_s: None,
         });
     }
 
@@ -255,6 +261,13 @@ fn encode_tracks(tr: &Tracks) -> Vec<u8> {
     b
 }
 
+/// Set each flight's predicted landing time from `eta` (flight id → seconds).
+pub fn attach_eta(json: &mut DayJson, eta: &HashMap<String, f32>) {
+    for f in &mut json.flights {
+        f.eta_s = eta.get(&f.id).map(|s| s.round() as i64);
+    }
+}
+
 /// Write `<out>/<airport>/<date>/{day.json,tracks.bin.gz}`.
 pub fn write_day(
     out: &Path,
@@ -280,9 +293,17 @@ pub fn run_day(
     ap: &'static Airport,
     day: NaiveDate,
     out: &Path,
+    models: Option<&Path>,
 ) -> anyhow::Result<String> {
-    let (twin, obs, _) = compute_day(store, ap, day)?;
-    let (json, tracks) = build(ap.icao, day, &twin, &obs);
+    let (twin, obs, metars) = compute_day(store, ap, day)?;
+    let (mut json, tracks) = build(ap.icao, day, &twin, &obs);
+    if let Some(dir) = models {
+        let rows = eta_rows(ap, &twin, &obs, &Weather::new(&metars));
+        let x: Vec<_> = rows.iter().map(|r| r.x).collect();
+        let pred = EtaModel::load(dir)?.predict(&x)?;
+        let eta = rows.into_iter().map(|r| r.flight_id).zip(pred).collect();
+        attach_eta(&mut json, &eta);
+    }
     write_day(out, ap.icao, &day.to_string(), &json, &tracks)?;
     let points = (tracks.len() - HEADER) / 18;
     Ok(format!(
@@ -658,6 +679,31 @@ mod tests {
     }
 
     #[test]
+    fn export_without_models_has_no_eta() {
+        let (tw, o) = two_flights();
+        let (j, _) = build("LTFM", day(), &tw, &o);
+        assert!(j.flights.iter().all(|f| f.eta_s.is_none()));
+        assert!(
+            serde_json::to_string(&j)
+                .unwrap()
+                .contains("\"eta_s\":null")
+        );
+    }
+
+    #[test]
+    fn attach_eta_sets_predictions_by_flight_id() {
+        let (tw, o) = two_flights();
+        let (mut j, _) = build("LTFM", day(), &tw, &o);
+        let eta = std::collections::HashMap::from([
+            ("bbb-1".to_string(), 912.4f32),
+            ("nope".to_string(), 1.0),
+        ]);
+        attach_eta(&mut j, &eta);
+        assert_eq!(j.flights[0].eta_s, None);
+        assert_eq!(j.flights[1].eta_s, Some(912));
+    }
+
+    #[test]
     fn hist_counts_departures_without_runway() {
         let mut dep = flight("dep-1", "eee", START, START + 400 * MIN, Kind::Departure);
         dep.liftoff_ms = Some(START + 365 * MIN);
@@ -796,6 +842,7 @@ mod tests {
                 holds: 0,
                 hold_s: 0,
                 p: [0, 0],
+                eta_s: None,
             })
             .collect();
         let j = DayJson {
