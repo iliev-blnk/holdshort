@@ -152,7 +152,9 @@ pub fn eta_rows(ap: &Airport, twin: &DayTwin, obs: &[Obs], wx: &Weather) -> Vec<
         }
         let Some(p) = by_hex
             .get(f.hex.as_str())
-            .and_then(|v| v.iter().min_by_key(|o| (o.ts_ms - t0).abs()))
+            // The last point at or before the crossing: nothing seen later may leak in.
+            // (The ring crossing is interpolated from a point outside, so one exists.)
+            .and_then(|v| v.iter().rev().find(|o| o.ts_ms <= t0))
         else {
             continue;
         };
@@ -518,6 +520,22 @@ mod tests {
         assert!(r.x[col("hour_sin")] < 0.0);
         // Thursday.
         assert_eq!(r.x[col("dow")], 3.0);
+    }
+
+    #[test]
+    fn entry_features_never_use_a_point_after_the_crossing() {
+        let tw = twin(
+            vec![arrival("a-1", "aaa", at(6, 0), at(6, 16))],
+            vec![],
+            vec![],
+        );
+        let before = south_entry("aaa", at(6, 0) - 5_000);
+        let mut after = south_entry("aaa", at(6, 0) + 3_000);
+        after.alt_baro_ft = Some(8_000);
+        after.gs_kt = Some(250.0);
+        let r = one(&tw, &[after, before], &Weather::new(&[]));
+        assert_eq!(r.x[col("alt_ft")], 9000.0);
+        assert_eq!(r.x[col("gs_kt")], 280.0);
     }
 
     #[test]
