@@ -41,3 +41,19 @@ jobs:
       - run: pnpm build
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm e2e
+
+  research:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: research
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: research/requirements.lock
+      - run: pip install -r requirements.lock -e .
+      # Unit tests and the end-to-end pipeline on synthetic data (real data isn't in the repo).
+      - run: pytest -q

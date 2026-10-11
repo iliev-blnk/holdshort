@@ -3,12 +3,13 @@
 A digital twin of airport airspace, built from open ADS-B data. The main airport is Istanbul
 (LTFM, ~1,500 flights a day); Suceava (LRSV) is a second, smaller one.
 
-This repository holds sub-projects 1–3 of 6. **Ingest** builds a dataset of every aircraft
+This repository holds sub-projects 1–4 of 6. **Ingest** builds a dataset of every aircraft
 position within 50 nm of each airport. Complete days come from the adsb.lol daily archive, and a live
 poller adds same-day data. Each day is compacted to Parquet alongside METAR weather. The **twin**
 turns those positions into flights and airport events: arrivals and departures with their runway
-and time, go-arounds, holds, approach time (ASMA) and the runway configuration in use. Later
-sub-projects build forecasting research on top of this.
+and time, go-arounds, holds, approach time (ASMA) and the runway configuration in use. The
+**console** replays any day in the browser, and the **research** package forecasts landing times
+and hourly arrivals from the twin, served back from Rust through ONNX Runtime.
 
 **[Live console: holdshort.pages.dev](https://holdshort.pages.dev)**, a replay of any of the
 10 days with every aircraft, runway and go-around.
@@ -157,7 +158,8 @@ The twin can only see what the feeders see, and Istanbul's coverage has holes:
 output. Aircraft move on the map in their kind's colour (arrivals blue, departures orange,
 other traffic grey) with two-minute trails. The timeline shows movements per 10 minutes and the
 runway configuration over the day. The side panel lists events as they happen, and clicking an
-aircraft or an event opens its flight. The URL keeps the day, time and selected flight
+aircraft or an event opens its flight, including the landing time the model predicted when it
+was 40 nm out (see Research). The URL keeps the day, time and selected flight
 (`?d=2026-10-02&t=10:04&f=…`), so a moment can be linked.
 
 It is a static site on Cloudflare Pages with no server:
@@ -183,6 +185,44 @@ pnpm --dir console run pages:deploy                       # wrangler, Cloudflare
 `pnpm --dir console test` runs the unit tests, and `pnpm --dir console e2e` runs a browser smoke
 test on a small fixture day. Set `CHROMIUM_PATH` to use a local Chromium.
 
+## Research
+
+Two short-term forecasts for Istanbul, trained on 38 days (1 September – 8 October 2026) and
+scored once on the last week. The full report with figures is
+[research/REPORT.md](research/REPORT.md).
+
+| Question | LightGBM | Best baseline |
+| --- | --- | --- |
+| Time from 40 nm to touchdown (3,143 test arrivals) | **1.39 min** mean error | 1.90 min (median by entry sector × runways in use) |
+| Arrivals per hour, 1–3 h ahead (168 test hours) | **3.8–3.9** per hour | 4.17 (hour-of-day average) |
+
+The landing-time model beats the baselines on every test day and in every traffic band; the gain
+is largest when the approach is busy (1.71 against 2.35 min). The hourly model is only a little
+better than the daily pattern it mostly relies on.
+
+How it fits together:
+
+- `crates/twin/src/features.rs` computes the features in Rust: for each arrival at its 40 nm
+  entry, its position, speed, the traffic already inside the ring, recent landings, holds,
+  runway configuration and wind; and touchdowns per hour. `holdshort features <range>` writes
+  them to Parquet.
+- `research/` (Python: polars, LightGBM) trains on whole days in time order (train
+  1–24 Sep, validation 25 Sep – 1 Oct, test 2–8 Oct), compares against baselines, writes the
+  report, and exports the models to ONNX (`models/`).
+- `crates/models` runs the ONNX models with ONNX Runtime (`ort`). Parity tests check that Rust
+  reproduces Python's predictions and hourly features. `holdshort forecast-check` reproduces the
+  report's test numbers, and `holdshort export --models models` puts the predicted landing time
+  in the console.
+
+To reproduce:
+
+```sh
+holdshort features 2026-09-01..2026-10-08 --airport LTFM
+python3 -m venv research/.venv && research/.venv/bin/pip install -r research/requirements.lock -e research
+(cd research && .venv/bin/python -m holdshort_research all --data ../data --out ../models --report .)
+holdshort forecast-check 2026-10-02..2026-10-08 --airport LTFM
+```
+
 ## Data sources and licences
 
 - [adsb.lol](https://adsb.lol): live API and the `globe_history` daily archive. The database is
@@ -198,9 +238,9 @@ test on a small fixture day. Set `CHROMIUM_PATH` to use a local Chromium.
 2. **Twin engine** (done): flights, runways, touchdown and liftoff, go-arounds, holds, ASMA,
    runway configuration
 3. **Console** (done): replay with map, timeline, events and shareable links
-4. Research: forecasts of ASMA, runway configuration, hourly movements and go-around probability,
-   compared against baselines and served from Rust via ONNX. Taxi times are out of reach because
-   there is no ground coverage.
+4. **Research** (done): landing time at 40 nm and arrivals per hour, LightGBM against baselines,
+   served from Rust via ONNX. Runway-configuration and go-around forecasts wait for more varied
+   data; taxi times are out of reach because there is no ground coverage.
 5. Anomaly detection
 6. Technical write-up
 
