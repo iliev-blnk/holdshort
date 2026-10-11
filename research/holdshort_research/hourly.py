@@ -18,8 +18,9 @@ HORIZONS = (1, 2, 3)
 
 
 def profile(counts: pl.DataFrame) -> list[float]:
-    """Mean arrivals per hour of day over the training days only."""
-    train = split(counts, "train")
+    """Mean arrivals per hour of day over the days the final model learns from
+    (train + validation), never the test days."""
+    train = pl.concat([split(counts, "train"), split(counts, "val")])
     by = dict(train.group_by("hour").agg(pl.col("arrivals").mean()).iter_rows())
     return [float(by.get(h, np.nan)) for h in range(24)]
 
@@ -50,14 +51,22 @@ def features(counts: pl.DataFrame, horizon: int, profile: list[float]) -> pl.Dat
                 "lag3": at(issue - 3 * hour),
                 "same_yday": at(ts - 24 * hour),
                 "same_week": at(ts - 7 * 24 * hour),
+                # Baseline only (not a model feature): mean of the same hour over the 7 days before.
+                "last7": _mean([at(ts - d * 24 * hour) for d in range(1, 8)]),
                 "profile": float(profile[ts.hour]),
             }
         )
     return pl.DataFrame(rows)
 
 
+def _mean(values: list[float]) -> float:
+    known = [v for v in values if not math.isnan(v)]
+    return sum(known) / len(known) if known else math.nan
+
+
 def baselines(df: pl.DataFrame) -> dict[str, np.ndarray]:
-    """Persistence (last completed hour), same hour yesterday, hour-of-day profile.
+    """Persistence (last completed hour), same hour yesterday, same hour over the last
+    7 days, hour-of-day profile.
     A missing value falls back to the profile, so every baseline predicts every row."""
     prof = df["profile"].to_numpy()
 
@@ -65,7 +74,7 @@ def baselines(df: pl.DataFrame) -> dict[str, np.ndarray]:
         v = df[col].to_numpy()
         return np.where(np.isnan(v), prof, v)
 
-    return {"persistence": filled("lag1"), "same_yday": filled("same_yday"), "profile": prof}
+    return {"persistence": filled("lag1"), "same_yday": filled("same_yday"), "last7": filled("last7"), "profile": prof}
 
 
 def matrix(df: pl.DataFrame) -> np.ndarray:

@@ -42,11 +42,25 @@ def test_lags_skip_missing_days():
     assert np.isnan(r["same_week"])
 
 
-def test_profile_uses_train_only():
-    c = counts(["2026-09-01", "2026-09-02", "2026-10-05"], lambda d, h: 1000 if d == 2 else 10 + d)
+def test_profile_uses_train_and_val_never_test():
+    # Train 09-01 (10), validation 09-30 (20), test 10-05 (1000).
+    c = counts(["2026-09-01", "2026-09-30", "2026-10-05"], lambda d, h: [10, 20, 1000][d])
     p = profile(c)
     assert len(p) == 24
-    assert np.allclose(p, 10.5)
+    assert np.allclose(p, 15)
+
+
+def test_last7_uses_only_previous_days():
+    days = [f"2026-09-{d:02d}" for d in range(1, 10)]
+    c = counts(days, lambda d, h: d)  # day index 0..8
+    f = features(c, horizon=1, profile=[0.0] * 24)
+    # 09-09 (index 8): the previous 7 days are indices 1..7 → mean 4.
+    assert row(f, datetime(2026, 9, 9, 12))["last7"] == 4.0
+    # 09-02: only 09-01 (index 0) before it.
+    assert row(f, datetime(2026, 9, 2, 12))["last7"] == 0.0
+    # 09-01: nothing before it.
+    assert np.isnan(row(f, datetime(2026, 9, 1, 12))["last7"])
+    assert "last7" not in HOURLY_FEATURES
 
 
 def test_calendar_features():

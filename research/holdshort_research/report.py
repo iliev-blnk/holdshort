@@ -17,6 +17,7 @@ NAMES = {
     "distance_speed": "Distance ÷ ground speed (scaled)",
     "persistence": "Last hour",
     "same_yday": "Same hour yesterday",
+    "last7": "Same hour, last 7 days",
     "profile": "Hour-of-day average",
 }
 SLATE = {"arr": "#5aa9ff", "dep": "#ff9f43", "muted": "#8d97a1", "ink": "#262b31"}
@@ -104,14 +105,26 @@ def write(report_dir: Path, res: dict) -> None:
     )
     lo, hi = e["band_edges"]
 
-    h_lines = ["| Horizon | LightGBM MAE | Last hour | Same hour yesterday | Hour-of-day average |", "| --- | --- | --- | --- | --- |"]
+    h_lines = ["| Horizon | LightGBM MAE | Last hour | Same hour yesterday | Same hour, last 7 days | Hour-of-day average |", "| --- | --- | --- | --- | --- | --- |"]
     for h, v in res["hourly"]["horizons"].items():
         s = v["test"]
         h_lines.append(
-            f"| {h} h | **{s['model']['mae']:.2f}** | {s['persistence']['mae']:.2f} | {s['same_yday']['mae']:.2f} | {s['profile']['mae']:.2f} |"
+            f"| {h} h | **{s['model']['mae']:.2f}** | {s['persistence']['mae']:.2f} | {s['same_yday']['mae']:.2f} | {s['last7']['mae']:.2f} | {s['profile']['mae']:.2f} |"
         )
     h1 = res["hourly"]["horizons"]["1"]["test"]
     hk, hv = _best_baseline(h1)
+    beats = [h for h, v in res["hourly"]["horizons"].items() if v["test"]["model"]["mae"] < _best_baseline(v["test"])[1]["mae"]]
+    if len(beats) == len(res["hourly"]["horizons"]):
+        hourly_verdict = (f"The model beats every baseline at every horizon; one hour ahead its error is "
+                          f"{h1['model']['mae']:.2f} arrivals per hour against {hv['mae']:.2f} ({NAMES[hk]}).")
+    else:
+        hourly_verdict = (f"**The model does not reliably beat a simple baseline.** One hour ahead its error is "
+                          f"{h1['model']['mae']:.2f} arrivals per hour against {hv['mae']:.2f} for {NAMES[hk].lower()}; "
+                          f"it is ahead of the best baseline only at horizon(s) {', '.join(beats) or 'none'}, and by "
+                          f"very little. Hub schedules repeat from day to day, so the recent same-hour average already "
+                          f"carries most of what can be predicted from positions alone. Beating it would need schedule "
+                          f"data, which this project does not use. Since the test week has now been seen, any change "
+                          f"made to chase this baseline would need a new, unseen test week.")
 
     text = f"""# holdshort research: two short-term forecasts for Istanbul Airport
 
@@ -157,10 +170,7 @@ absolute error in arrivals per hour on the test week:
 
 {chr(10).join(h_lines)}
 
-One hour ahead the model's error is {h1['model']['mae']:.2f} arrivals per hour against {hv['mae']:.2f}
-for the best baseline ({NAMES[hk]}). The 2- and 3-hour forecasts are about as good as the 1-hour
-one: the model leans on the daily pattern (hour-of-day average, same hour yesterday) more than on
-the last few hours, which are noisy at this scale. The gain over the hour-of-day average is small.
+{hourly_verdict}
 
 ![Arrivals per hour](figures/hourly_test_week.png)
 

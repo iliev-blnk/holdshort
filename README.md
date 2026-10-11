@@ -194,11 +194,12 @@ scored once on the last week. The full report with figures is
 | Question | LightGBM | Best baseline |
 | --- | --- | --- |
 | Time from 40 nm to touchdown (3,143 test arrivals) | **1.39 min** mean error | 1.90 min (median by entry sector × runways in use) |
-| Arrivals per hour, 1–3 h ahead (168 test hours) | **3.8–3.9** per hour | 4.17 (hour-of-day average) |
+| Arrivals per hour, 1–3 h ahead (168 test hours) | 3.77–3.93 per hour | 3.82 (same hour, last 7 days) |
 
 The landing-time model beats the baselines on every test day and in every traffic band; the gain
-is largest when the approach is busy (1.71 against 2.35 min). The hourly model is only a little
-better than the daily pattern it mostly relies on.
+is largest when the approach is busy. The hourly model does **not** reliably beat the average of
+the same hour over the last seven days: hub schedules repeat, and positions alone add little.
+Beating it would need schedule data.
 
 How it fits together:
 

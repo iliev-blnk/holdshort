@@ -13,10 +13,10 @@ When an arrival first comes within 40 nm of LTFM, how long until it lands? This 
 
 | Predictor | MAE (min) | RMSE (min) | P90 error (min) |
 | --- | --- | --- | --- |
-| **LightGBM** | 1.39 | 2.45 | 2.69 |
+| **LightGBM** | 1.39 | 2.43 | 2.73 |
 | Global median | 2.44 | 3.72 | 4.92 |
-| Median by sector × runways in use | 1.90 | 3.08 | 3.81 |
-| Distance ÷ ground speed (scaled) | 3.31 | 4.65 | 7.63 |
+| Median by sector × runways in use | 1.90 | 3.09 | 3.82 |
+| Distance ÷ ground speed (scaled) | 3.29 | 4.62 | 7.49 |
 
 The model's mean error is **1.39 min** against **1.90 min** for the best
 baseline (Median by sector × runways in use), 27% lower.
@@ -28,9 +28,9 @@ high above, cut at the training terciles):
 
 | Traffic | Flights | LightGBM MAE (min) | Sector × runways (min) | Global median (min) |
 | --- | --- | --- | --- | --- |
-| low | 1238 | 1.18 | 1.65 | 2.04 |
-| mid | 835 | 1.30 | 1.70 | 2.16 |
-| high | 1070 | 1.71 | 2.35 | 3.11 |
+| low | 1238 | 1.16 | 1.66 | 2.04 |
+| mid | 835 | 1.30 | 1.69 | 2.16 |
+| high | 1070 | 1.72 | 2.35 | 3.11 |
 
 ![Error by congestion](figures/eta_by_band.png)
 
@@ -39,12 +39,12 @@ By test day:
 | Day | Flights | LightGBM MAE (min) | Best baseline MAE (min) |
 | --- | --- | --- | --- |
 | 2026-10-02 | 492 | 1.99 | 2.83 |
-| 2026-10-03 | 479 | 1.40 | 1.89 |
-| 2026-10-04 | 435 | 1.31 | 1.82 |
-| 2026-10-05 | 485 | 1.24 | 1.62 |
+| 2026-10-03 | 479 | 1.45 | 1.91 |
+| 2026-10-04 | 435 | 1.29 | 1.80 |
+| 2026-10-05 | 485 | 1.21 | 1.62 |
 | 2026-10-06 | 418 | 0.97 | 1.49 |
-| 2026-10-07 | 402 | 1.16 | 1.50 |
-| 2026-10-08 | 432 | 1.59 | 2.03 |
+| 2026-10-07 | 402 | 1.15 | 1.51 |
+| 2026-10-08 | 432 | 1.56 | 2.03 |
 
 ![Feature importance](figures/eta_importance.png)
 
@@ -53,16 +53,13 @@ By test day:
 At the top of each hour, how many arrivals will land in each of the next three hours? Mean
 absolute error in arrivals per hour on the test week:
 
-| Horizon | LightGBM MAE | Last hour | Same hour yesterday | Hour-of-day average |
-| --- | --- | --- | --- | --- |
-| 1 h | **3.86** | 10.74 | 4.67 | 4.17 |
-| 2 h | **3.79** | 16.53 | 4.67 | 4.17 |
-| 3 h | **3.80** | 17.38 | 4.67 | 4.17 |
+| Horizon | LightGBM MAE | Last hour | Same hour yesterday | Same hour, last 7 days | Hour-of-day average |
+| --- | --- | --- | --- | --- | --- |
+| 1 h | **3.93** | 10.74 | 4.67 | 3.82 | 4.00 |
+| 2 h | **3.81** | 16.53 | 4.67 | 3.82 | 4.00 |
+| 3 h | **3.77** | 17.38 | 4.67 | 3.82 | 4.00 |
 
-One hour ahead the model's error is 3.86 arrivals per hour against 4.17
-for the best baseline (Hour-of-day average). The 2- and 3-hour forecasts are about as good as the 1-hour
-one: the model leans on the daily pattern (hour-of-day average, same hour yesterday) more than on
-the last few hours, which are noisy at this scale. The gain over the hour-of-day average is small.
+**The model does not reliably beat a simple baseline.** One hour ahead its error is 3.93 arrivals per hour against 3.82 for same hour, last 7 days; it is ahead of the best baseline only at horizon(s) 2, 3, and by very little. Hub schedules repeat from day to day, so the recent same-hour average already carries most of what can be predicted from positions alone. Beating it would need schedule data, which this project does not use. Since the test week has now been seen, any change made to chase this baseline would need a new, unseen test week.
 
 ![Arrivals per hour](figures/hourly_test_week.png)
 
