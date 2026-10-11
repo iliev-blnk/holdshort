@@ -60,7 +60,9 @@ absolute error in arrivals per hour on the test week:
 | 3 h | **3.80** | 17.38 | 4.67 | 4.17 |
 
 One hour ahead the model's error is 3.86 arrivals per hour against 4.17
-for the best baseline (Hour-of-day average).
+for the best baseline (Hour-of-day average). The 2- and 3-hour forecasts are about as good as the 1-hour
+one: the model leans on the daily pattern (hour-of-day average, same hour yesterday) more than on
+the last few hours, which are noisy at this scale. The gain over the hour-of-day average is small.
 
 ![Arrivals per hour](figures/hourly_test_week.png)
 
@@ -71,7 +73,9 @@ for the best baseline (Hour-of-day average).
   works on these weeks, not across a year.
 - **Coverage.** The twin only knows what the open ADS-B feeders see. Arrivals whose touchdown
   time was estimated (lost on final) are left out of the landing-time rows. Coverage also got
-  worse on 6–8 October, inside the test week.
+  worse on 6–8 October, inside the test week, and was weak on 5 and 10–12 September (training
+  days with 145–243 usable arrivals instead of the usual ~450). Those days are kept as they are;
+  their hourly counts are below the real traffic.
 - **`inbound` is slightly optimistic.** It counts aircraft inside 40 nm that later land; a live
   system sees the same aircraft but cannot be certain each one will land.
 - **No schedules or flight plans.** Everything comes from positions, METAR and the twin's own
