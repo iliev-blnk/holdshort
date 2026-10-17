@@ -918,6 +918,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "holdshort-core",
  "holdshort-twin",
  "ort",
  "serde",
