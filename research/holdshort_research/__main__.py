@@ -13,7 +13,7 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
-from . import approach, eta, hourly, model, report
+from . import approach, approach_report, eta, hourly, model, report
 from .baselines import EtaBaselines
 from .data import SPLIT, load_eta, load_hourly, split
 from .metrics import summary
@@ -138,7 +138,7 @@ def main() -> None:
     p.add_argument("--report", type=Path, default=Path("."))
     a = p.parse_args()
     if a.command == "approach":
-        _print_approach(approach.run(a.data, a.out))
+        _approach(a)
         return
     res = run_all(a.data, a.out, a.report)
     t = res["eta"]["test"]
@@ -148,10 +148,12 @@ def main() -> None:
         s = v["test"]
         print(f"arrivals/hour h={h}: model MAE {s['model']['mae']:.2f} vs best baseline "
               f"{min(x['mae'] for k, x in s.items() if k != 'model'):.2f}")
-    _print_approach(approach.run(a.data, a.out))
+    _approach(a)
 
 
-def _print_approach(res: dict) -> None:
+def _approach(a) -> None:
+    res = approach.run(a.data, a.out)
+    approach_report.write(a.report, a.data, res)
     t = res["test"]
     print(f"approaches: k={res['k']}, {t['n']} test approaches, {t['n_labels']} labelled, {t['flagged']} flagged")
     for d in approach.DETECTORS:

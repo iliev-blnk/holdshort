@@ -1,5 +1,6 @@
 //! `holdshort`: backfill, live, compact and METAR-history commands.
 
+mod anomaly;
 mod backfill;
 mod check;
 mod compact;
@@ -63,6 +64,12 @@ enum Cmd {
     Features { range: String },
     /// Run the forecasting models over feature tables and compare them with baselines.
     ForecastCheck {
+        range: String,
+        #[arg(long, default_value = "models")]
+        models: String,
+    },
+    /// Score approaches with the anomaly detector against the twin's holds and go-arounds.
+    AnomalyCheck {
         range: String,
         #[arg(long, default_value = "models")]
         models: String,
@@ -198,6 +205,16 @@ fn run(cli: Cli) -> anyhow::Result<bool> {
                         a.icao, h.horizon, h.n, h.model_mae, h.baseline_mae
                     );
                 }
+            }
+        }
+        Cmd::AnomalyCheck { range, models } => {
+            let days = dates::parse_range(&range)?;
+            for a in &airports {
+                let r = anomaly::check(&store, a, &days, std::path::Path::new(&models))?;
+                println!(
+                    "{} approaches: {} scored, {} labelled, AP {:.3}, recall@1% {:.3}, {} flagged",
+                    a.icao, r.n, r.n_labels, r.ap, r.recall_1pct, r.flagged
+                );
             }
         }
         Cmd::Export { range, out, models } => {

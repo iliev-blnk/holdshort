@@ -190,7 +190,12 @@ pub(crate) mod tests {
 
     /// A straight-in 3° approach to 35L from 45 nm (crosses the 40 nm ring), 5 s steps, from 01:00.
     pub(crate) fn long_approach() -> Vec<Obs> {
-        let r = LTFM.runways.iter().find(|r| r.name == "35L").unwrap();
+        long_approach_to("35L")
+    }
+
+    /// The same approach to another runway.
+    pub(crate) fn long_approach_to(runway: &str) -> Vec<Obs> {
+        let r = LTFM.runways.iter().find(|r| r.name == runway).unwrap();
         let t0 = 1_791_417_600_000 + 3_600_000;
         let step = 140.0 * NM_M / 3600.0 * 5.0;
         let n = (45.0 * NM_M / step) as i64;

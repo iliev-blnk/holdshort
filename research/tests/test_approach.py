@@ -139,3 +139,15 @@ def test_fit_and_export_round_trip(tmp_path):
     res = A.score(model, val)
     assert set(res.columns) >= {"knn", "pct", "flag", "nearest", "reasons"}
     assert res["flag"].sum() <= 2
+
+
+def test_go_around_shape_and_entry_bearing():
+    from holdshort_research.approach_report import entry_bearing, go_around_shape
+
+    p = np.zeros((2, 32, 3))
+    p[:, :, 2] = np.linspace(10, 0, 32)
+    p[1, 10, 2] = 1.0  # dips below 1,500 ft, then is back above 3,000 ft
+    assert go_around_shape(p).tolist() == [False, True]
+    p[0, 0, :2] = [0.0, 40.0]  # 40 nm to the right of a 359.1° runway: east
+    p[1, 0, :2] = [40.0, 0.0]  # straight ahead: north
+    np.testing.assert_allclose(entry_bearing(p), [89.1, 359.1])
