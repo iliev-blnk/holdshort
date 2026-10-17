@@ -3,13 +3,14 @@
 A digital twin of airport airspace, built from open ADS-B data. The main airport is Istanbul
 (LTFM, ~1,500 flights a day); Suceava (LRSV) is a second, smaller one.
 
-This repository holds sub-projects 1–4 of 6. **Ingest** builds a dataset of every aircraft
+This repository holds sub-projects 1–5 of 6. **Ingest** builds a dataset of every aircraft
 position within 50 nm of each airport. Complete days come from the adsb.lol daily archive, and a live
 poller adds same-day data. Each day is compacted to Parquet alongside METAR weather. The **twin**
 turns those positions into flights and airport events: arrivals and departures with their runway
 and time, go-arounds, holds, approach time (ASMA) and the runway configuration in use. The
 **console** replays any day in the browser, and the **research** package forecasts landing times
-and hourly arrivals from the twin, served back from Rust through ONNX Runtime.
+and hourly arrivals from the twin, served back from Rust through ONNX Runtime. **Anomaly detection**
+compares every approach with the normal approaches to its runway and flags the most unusual 1%.
 
 **[Live console: holdshort.pages.dev](https://holdshort.pages.dev)**, a replay of any of the
 10 days with every aircraft, runway and go-around.
@@ -224,6 +225,46 @@ python3 -m venv research/.venv && research/.venv/bin/pip install -r research/req
 holdshort forecast-check 2026-10-02..2026-10-08 --airport LTFM
 ```
 
+## Anomaly detection
+
+Which approaches were unusual? Each arrival's path from the 40 nm ring to touchdown is resampled
+at 32 points along the path, in its runway's frame (nm along and across the centreline, height in
+thousands of feet). Its score is the mean distance to the 5 nearest normal approaches to the same
+runway: the training days' approaches without a hold or go-around. Approaches above the
+validation week's 99th percentile are flagged, and the console shows each flagged approach with
+the nearest normal one dashed and the metrics that stand out (extra distance, time, turns, level
+time, height at 10 nm, speed at 4 nm, cross-track on final). The full report, with every flagged
+test approach drawn, is [research/ANOMALY.md](research/ANOMALY.md).
+
+The detector never sees the twin's holds and go-arounds, so they serve as a check. On the test
+week (2–8 October, 3,050 approaches, 28 with a hold or go-around):
+
+| Detector | Average precision | Recall in the top 1% |
+| --- | --- | --- |
+| kNN path distance (served) | 0.208 | 0.393 |
+| Robust z over the metrics | 0.069 | 0.000 |
+| Isolation forest on the metrics | 0.422 | 0.643 |
+| Landing-time residual (Research) | 0.496 | 0.643 |
+
+A random ranking scores about 0.009. The served detector was fixed before the test week and does
+**not** rank holds and go-arounds best: they are mostly long approaches, which the metric
+detectors measure directly. What it flags is different. Of its 22 test-week flags, 7 are
+go-arounds (one of them missed by the twin's rule), and 14 entered the ring from the north or
+north-east, an entry only 1.1% of normal approaches use. Those categories come from looking at
+each drawing; there is no ground truth for "unusual".
+
+How it fits together: `crates/twin/src/approach.rs` builds the rows (`holdshort features` writes
+them), `research/holdshort_research/approach.py` fits, compares, calibrates and exports the
+reference set (`models/approach.json` + `approach_ref.f32`, about 3.4 MB), and
+`crates/models/src/approach.rs` scores in plain Rust with parity tests against Python.
+
+```sh
+holdshort features 2026-09-01..2026-10-08 --airport LTFM
+(cd research && .venv/bin/python -m holdshort_research approach --data ../data --out ../models --report .)
+holdshort anomaly-check 2026-10-02..2026-10-08 --airport LTFM   # reproduces the kNN row
+holdshort export 2026-09-29..2026-10-08 --airport LTFM --models models
+```
+
 ## Data sources and licences
 
 - [adsb.lol](https://adsb.lol): live API and the `globe_history` daily archive. The database is
@@ -242,7 +283,8 @@ holdshort forecast-check 2026-10-02..2026-10-08 --airport LTFM
 4. **Research** (done): landing time at 40 nm and arrivals per hour, LightGBM against baselines,
    served from Rust via ONNX. Runway-configuration and go-around forecasts wait for more varied
    data; taxi times are out of reach because there is no ground coverage.
-5. Anomaly detection
+5. **Anomaly detection** (done): kNN on resampled approach paths against normal approaches per
+   runway, checked against holds and go-arounds and three baselines, flagged approaches in the console
 6. Technical write-up
 
 ## License
