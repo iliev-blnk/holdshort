@@ -15,6 +15,9 @@ from . import approach as A  # noqa: E402
 
 PER_FIGURE = 12
 REVIEW = "anomaly_review.csv"
+# The first test-week run (2026-10-17), before the coverage fix below. Kept as history: the
+# pipeline that produced it no longer exists, so these cannot be recomputed.
+FIRST_RUN = {"k": 5, "n": 3050, "ap": 0.208, "recall_1pct": 0.393, "flagged": 22, "scored": 15245}
 NAMES = {
     "knn": "kNN path distance (served)",
     "zmax": "Robust z (max over metrics)",
@@ -134,7 +137,8 @@ def score_figure(res: dict, fig_dir: Path) -> Path:
         ax.axvline(res["_model"].runways[rw].threshold, color="k", ls="--", lw=1, label="flag threshold")
         ax.set_yscale("log")
         ax.set_title(f"{rw}: kNN score, test week", fontsize=9)
-        ax.set_xlabel("mean distance to the 5 nearest normal approaches")
+        k = res["_model"].k
+        ax.set_xlabel("distance to the nearest normal approach" if k == 1 else f"mean distance to the {k} nearest normal approaches")
         ax.legend(fontsize=7)
     fig.tight_layout()
     path = fig_dir / "anomaly_scores.png"
@@ -162,7 +166,11 @@ def write(report_dir: Path, data_dir: Path, res: dict) -> None:
     pages = gallery(res, data_dir, fig_dir)
     score_figure(res, fig_dir)
     t = res["test"]
-    review = _review(report_dir)
+    flagged = set(res["_test"].filter(pl.col("flag"))["flight_id"])
+    review = [r for r in _review(report_dir) if r["flight_id"] in flagged]
+    missing = flagged - {r["flight_id"] for r in review}
+    if missing:
+        print(f"warning: {len(missing)} flagged approaches have no review row: {sorted(missing)}")
     cats = Counter(r["category"] for r in review)
     sq = squawk_7700(data_dir)
     test = res["_test"]
@@ -211,9 +219,17 @@ def write(report_dir: Path, data_dir: Path, res: dict) -> None:
     ]
     for d in A.DETECTORS:
         L.append(f"| {NAMES[d]} | {_fmt(t[d]['ap'])} | {_fmt(t[d]['recall_1pct'])} |")
+    top = test.sort("zmax", descending=True).head(int(np.ceil(0.01 * test.height)))
+    near_const = int(top["zmax_metric"].is_in(["high_10nm_ft", "xtk_final_m"]).sum())
     L += [
         "",
         f"A random ranking would have an average precision of about {t['n_labels'] / t['n']:.3f}.",
+        "",
+        f"Robust z is held back by two nearly constant metrics. On 34L most aircraft are still level at 3,000 ft at 10 nm, "
+        f"so the spread of the height at 10 nm is a few feet, and cross-track on final varies by a few metres on both runways. "
+        f"Tiny differences there give huge z values: in {near_const} of the {top.height} top robust-z approaches the largest |z| "
+        "is one of those two metrics. The reasons shown in the console therefore divide by at least a floor per metric "
+        "(100 ft, 50 m, 5 kt, …); the robust-z detector above is scored as it was fitted.",
         "",
     ]
     best = max(A.DETECTORS, key=lambda d: t[d]["ap"])
@@ -226,6 +242,20 @@ def write(report_dir: Path, data_dir: Path, res: dict) -> None:
             "below shows what it does flag.",
             "",
         ]
+    f = FIRST_RUN
+    L += [
+        f"**A correction after the first test run.** The first run scored {f['n']:,} test approaches with k = {f['k']}: "
+        f"kNN average precision {f['ap']:.3f}, recall {f['recall_1pct']:.3f}, {f['flagged']} flagged. The final code review then "
+        "found a coverage bug: when the last point before the 40 nm entry was more than 10 minutes before the first point "
+        "after it, the entry was interpolated across that gap (sometimes from an earlier flight of the same aircraft). "
+        "Such approaches now count as coverage gaps, as the 10-minute rule intends. That removed "
+        f"{f['scored'] - sum(res['rows'].values())} of the {f['scored']:,} scored approaches "
+        f"({1 - sum(res['rows'].values()) / f['scored']:.1%}), the validation week then chose k = {res['k']} instead of {f['k']}, "
+        "and the numbers above are from the corrected pipeline. "
+        "Nothing else changed, and the fix was not chosen for its effect: it lowered the kNN numbers. That so small a change "
+        f"moves them this much is itself a result: with {t['n_labels']} labelled test approaches, the kNN numbers are fragile.",
+        "",
+    ]
     L += [
         f"With the threshold from the validation week, kNN flagged {t['flagged']} test approaches "
         f"({t['flagged'] / t['n']:.1%}). Labelled approaches had a median kNN percentile of {t['labelled_median_pct']:.1f}.",
@@ -259,7 +289,8 @@ def write(report_dir: Path, data_dir: Path, res: dict) -> None:
             "",
             f"Most of the unlabelled flags entered the ring from the north or north-east. Only {north:.1%} of the reference "
             "approaches did, so the detector finds them far from everything it knows. The traffic flow is real but rare: "
-            "WZZ398 is flagged three times at the same time of day.",
+            + ", ".join(f"{c} is flagged {'twice' if n == 2 else f'{n} times'}" for c, n in Counter(r["flight"] for r in review).items() if n > 1)
+            + ", each time at the same time of day.",
             "",
             f"The review also explains why kNN ranks go-arounds lower than the other detectors. {shaped} of the {len(rp):,} reference "
             "approaches have a go-around shape in their resampled height profile (below 1,500 ft, then above 3,000 ft) but no "
@@ -297,8 +328,9 @@ def write(report_dir: Path, data_dir: Path, res: dict) -> None:
         "- The labels are also used to keep holds and go-arounds out of the reference.",
         "- North flow only: every day in the data landed on 34L/35R. South-flow approaches and the other runways are not scored.",
         "- Coverage holes can look like unusual approaches. Lost-on-final arrivals (20% of arrivals) are not scored at all.",
-        "- 34L approaches sit about 500 ft below a 3° path at 10 nm with almost no spread, against about +40 ft on 35R. That is most "
-        "likely an offset in the 34L threshold position from OurAirports. Per-runway statistics absorb it.",
+        "- At 10 nm, most 34L traffic is still level at 3,000 ft (about 500 ft below a 3° path) and joins the glide path closer in, "
+        "while 35R traffic is already on it. The height at 10 nm therefore means different things on the two runways; per-runway "
+        "statistics keep them apart.",
         "",
         "To reproduce: `holdshort features 2026-09-01..2026-10-08`, then "
         "`python -m holdshort_research approach --data ../data --out ../models --report .`, then "

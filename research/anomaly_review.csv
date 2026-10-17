@@ -1,23 +1,20 @@
 flight_id,flight,date,category,note
-4baacd-1790924380310,THY3AY,2026-10-02,entry from the north or north-east,"entered at 13°, round the east side, joined final at 17 nm; +89 nm"
-4bb103-1790929441000,THY4MS,2026-10-02,go-around the twin missed,"descends to about 800 ft, climbs back to 4,600 ft and lands from a second approach; no twin label"
 4ba88f-1790931683040,THY6317,2026-10-02,entry from the north or north-east,"entered at 62°, crossed north of the airport and came down the west side; +100 nm"
-4ba9d2-1790934408660,THY727,2026-10-02,entry from the north or north-east,"entered at 53°, east downwind out to 28 nm south, level at 9,700 ft for about 40 nm"
-4baa67-1790935124250,THY8JE,2026-10-02,go-around (twin label),"go-around and hold"
-4baa42-1790936874240,THY4HE,2026-10-02,entry from the north or north-east,"entered at 62°, wide east downwind"
 4ba9a8-1790956147630,THY3UQ,2026-10-02,unusual routing,"entered from the south (165°), crossed under the final to the west and joined at 17 nm"
-4bb203-1790972107970,THY7PY,2026-10-02,go-around (twin label),
+4ba9d2-1790934408660,THY727,2026-10-02,entry from the north or north-east,"entered at 53°, east downwind out to 28 nm south, level at 9,700 ft for about 40 nm"
 4ba9ef-1790977832310,THY6543,2026-10-02,entry from the north or north-east,"entered at 8°, short join to final at 8 nm, 1,000 ft below a 3° path at 10 nm"
-4bb186-1791015970910,THY184,2026-10-03,go-around (twin label),
+4baa42-1790936874240,THY4HE,2026-10-02,entry from the north or north-east,"entered at 62°, wide east downwind"
+4baa67-1790935124250,THY8JE,2026-10-02,go-around (twin label),go-around and hold
+4baacd-1790924380310,THY3AY,2026-10-02,entry from the north or north-east,"entered at 13°, round the east side, joined final at 17 nm; +89 nm"
+4bb064-1790935272510,THY3GR,2026-10-02,entry from the north or north-east,"entered at 67°, east side out to 28 nm south, joined at 12 nm"
+4bb103-1790929441000,THY4MS,2026-10-02,go-around the twin missed,"descends to about 800 ft, climbs back to 4,600 ft and lands from a second approach; no twin label"
+4bb203-1790972107970,THY7PY,2026-10-02,go-around (twin label),
 4baa8e-1791035217350,THY1JU,2026-10-03,entry from the north or north-east,"entered at 4°, wide east downwind"
-471daf-1791089445460,WZZ398,2026-10-04,entry from the north or north-east,"entered at 4°, east side, joined at 13 nm; same flight at the same time on 10-05 and 10-08"
-504e89-1791089722520,FIA5325,2026-10-04,entry from the north or north-east,"entered at 4°, wide east downwind, level at 9,700 ft"
+4bb46f-1790992594150,MNB547,2026-10-03,unusual routing,"night cargo from the west: descended early to 2,700 ft, crossed the final south of the airport, S-turned and climbed back to 3,700 ft before joining at 17 nm"
+471daf-1791089445460,WZZ398,2026-10-04,entry from the north or north-east,"entered at 4°, east side, joined at 13 nm; the same flight is flagged at the same time on 10-08"
 4a08e9-1791093145410,ROT261N,2026-10-04,entry from the north or north-east,"entered at 6°, east side, joined at 13 nm"
-4baa44-1791119828320,THY1CB,2026-10-04,go-around (twin label),
-471dbb-1791176232130,WZZ398,2026-10-05,entry from the north or north-east,"entered at 10°, east side, joined at 19 nm"
-502d79-1791198075080,BTI711,2026-10-05,go-around (twin label),"also entered from the north"
+504e89-1791089722520,FIA5325,2026-10-04,entry from the north or north-east,"entered at 4°, wide east downwind, level at 9,700 ft"
+502d79-1791198075080,BTI711,2026-10-05,go-around (twin label),also entered from the north
 4ba9e2-1791257486390,THY7AZ,2026-10-06,entry from the north or north-east,"entered at 4°, cut straight to an 11 nm final, higher than normal on the way"
-4baa8c-1791283715460,THY5AW,2026-10-06,entry from the north or north-east,"entered at 3°, joined at 11 nm"
 48ad81-1791378188850,LOT135,2026-10-07,entry from the north or north-east,"entered at 4°, wide east downwind, joined at 21 nm"
 4d2528-1791435032850,WZZ398,2026-10-08,entry from the north or north-east,"entered at 4°, east side, joined at 13 nm"
-4ba947-1791487482310,THY4YH,2026-10-08,go-around (twin label),

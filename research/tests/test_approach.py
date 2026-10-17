@@ -94,6 +94,7 @@ def test_zero_mad_is_ignored():
     assert np.isnan(z[0, 0]) and not np.isnan(z[0, 1])
     assert A.reasons(z[0]) == []
     assert A.zmax(np.full((1, 7), np.nan))[0] == 0.0
+    assert A.zmax_metric(np.array([[np.nan, 2.0, -5.0, 0, 0, 0, 0], [np.nan] * 7])) == ["turn_deg", None]
 
 
 def test_reference_excludes_labels_and_unscored():
@@ -151,3 +152,30 @@ def test_go_around_shape_and_entry_bearing():
     p[0, 0, :2] = [0.0, 40.0]  # 40 nm to the right of a 359.1° runway: east
     p[1, 0, :2] = [40.0, 0.0]  # straight ahead: north
     np.testing.assert_allclose(entry_bearing(p), [89.1, 359.1])
+
+
+def test_reasons_use_a_mad_floor():
+    # Near-constant metrics (34L level at 3,000 ft; tiny cross-track spread) must not turn
+    # sub-resolution differences into reasons; zmax keeps the raw MAD.
+    rng = np.random.default_rng(0)
+    m = rng.normal(size=(60, 7))
+    m[:, 0] *= 10  # extra_nm spread well above its 1 nm floor
+    m[:, 4] = -509.0 + rng.normal(0, 5, 60)
+    m[:, 6] = 15.0 + rng.normal(0, 1, 60)
+    train = frame(rng.normal(0, 0.2, 60), metrics=m)
+    model = A.fit(train, k=5)
+    rw = model.runways["35R"]
+    assert rw.reason_robust.mad[4] == 100.0 and rw.reason_robust.mad[6] == 50.0
+    assert rw.reason_robust.mad[0] == rw.robust.mad[0]
+    q = np.median(m, axis=0)
+    q[4] += 40.0  # 40 ft: many raw MADs away, well under the floor
+    q[6] += 13.0
+    res = A.score(model, frame([0.0], metrics=q[None]))
+    assert res["reasons"][0].to_list() == []
+    assert res["zmax"][0] > 3
+    A.calibrate(model, frame(rng.normal(0, 0.2, 40), dates=["2026-09-25"] * 40, metrics=rng.normal(size=(40, 7))))
+    import tempfile, pathlib
+    with tempfile.TemporaryDirectory() as d:
+        A.export(model, pathlib.Path(d))
+        meta = json.loads((pathlib.Path(d) / "approach.json").read_text())
+    assert meta["runways"][0]["mad"][4] == 100.0

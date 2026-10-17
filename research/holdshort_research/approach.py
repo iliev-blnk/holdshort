@@ -27,6 +27,10 @@ DETECTORS = ["knn", "zmax", "iforest", "eta_resid"]
 REASON_Z = 3.0
 MAX_REASONS = 2
 FLAG_PCT = 99
+# Reasons divide by at least this spread per metric, so differences below ADS-B resolution or
+# within a near-constant metric (34L traffic level at 3,000 ft at 10 nm) never become reasons.
+# Robust z as a detector keeps the raw MAD.
+REASON_MAD_FLOOR = np.array([1.0, 0.5, 15.0, 0.5, 100.0, 5.0, 50.0])
 
 
 def scored(df: pl.DataFrame) -> pl.DataFrame:
@@ -89,6 +93,12 @@ def zmax(z: np.ndarray) -> np.ndarray:
     return np.where(np.isnan(a).all(1), 0.0, np.nanmax(np.where(np.isnan(a), -np.inf, a), axis=1))
 
 
+def zmax_metric(z: np.ndarray) -> list[str | None]:
+    """The metric with the largest |z| in each row (None when every z is NaN)."""
+    a = np.where(np.isnan(z), -np.inf, np.abs(z))
+    return [METRICS[i] if np.isfinite(row[i]) else None for row, i in zip(a, a.argmax(1))]
+
+
 def reasons(z_row: np.ndarray) -> list[str]:
     a = np.abs(z_row)
     idx = [i for i in np.argsort(-np.where(np.isnan(a), -np.inf, a), kind="stable") if a[i] >= REASON_Z]
@@ -135,6 +145,10 @@ class RunwayModel:
     robust: Robust
     forest: IsolationForest
     quantiles: np.ndarray | None = None
+
+    @property
+    def reason_robust(self) -> Robust:
+        return Robust(self.robust.median, np.fmax(self.robust.mad, REASON_MAD_FLOOR))
 
     @property
     def ref(self) -> np.ndarray:
@@ -191,8 +205,9 @@ def score(m: Model, df: pl.DataFrame) -> pl.DataFrame:
             "knn": knn_s,
             "nearest": nearest,
             "zmax": zmax(z),
+            "zmax_metric": zmax_metric(z),
             "iforest": -r.forest.score_samples(_filled(X, r.robust.median)),
-            "reasons": [reasons(row) for row in z],
+            "reasons": [reasons(row) for row in r.reason_robust.z(X)],
         }
         if r.quantiles is not None:
             cols["pct"] = np.array([percentile(v, r.quantiles) for v in knn_s])
@@ -227,7 +242,7 @@ def export(m: Model, out: Path) -> None:
                 "n": len(r.ids),
                 "ids": r.ids,
                 "median": [_num(v) for v in r.robust.median],
-                "mad": [_num(v) for v in r.robust.mad],
+                "mad": [_num(v) for v in r.reason_robust.mad],
                 "quantiles": [float(v) for v in r.quantiles],
                 "threshold": r.threshold,
             }
@@ -262,7 +277,7 @@ def evaluate(res: pl.DataFrame) -> dict:
     return out
 
 
-def write_parity(res: pl.DataFrame, out: Path, n_other: int = 40) -> None:
+def write_parity(res: pl.DataFrame, out: Path, n_other: int = 50) -> None:
     flagged = res.filter(pl.col("flag"))
     other = res.filter(~pl.col("flag")).sort("date", "flight_id").head(n_other)
     rows = []

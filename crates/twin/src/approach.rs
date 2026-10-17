@@ -173,6 +173,10 @@ fn polyline(rwy: &RunwayEnd, entry: i64, td: i64, pts: &[&Obs], wx: &Weather) ->
         return None;
     }
     let first = inside[0];
+    // A bracketing point further back than a coverage gap may be another flight of the hex.
+    if first.t - before.t > MAX_GAP_MS {
+        return None;
+    }
     let f = if first.t == before.t {
         0.0
     } else {
@@ -571,6 +575,23 @@ mod tests {
         let pts = with_hex(straight_in(rwy("35R"), T0), "a1");
         let mut f = arrival("f1", "a1", &pts, "35R");
         f.asma_entry_ms = Some(T0 - 1_000);
+        assert_eq!(one(vec![f], &pts).unscored, Some("coverage"));
+    }
+
+    #[test]
+    fn start_never_bridges_to_an_earlier_flight() {
+        let mut pts = with_hex(straight_in(rwy("35R"), T0), "a1");
+        let f = arrival("f1", "a1", &pts, "35R");
+        // The points around the entry have no altitude; the same hex was seen 2 h earlier.
+        for o in &mut pts[..5] {
+            o.alt_baro_ft = None;
+            o.alt_geom_ft = None;
+        }
+        let mut early = pts[0].clone();
+        early.ts_ms = T0 - 2 * 3_600_000;
+        early.alt_baro_ft = Some(30_000);
+        early.alt_geom_ft = Some(30_000);
+        pts.insert(0, early);
         assert_eq!(one(vec![f], &pts).unscored, Some("coverage"));
     }
 

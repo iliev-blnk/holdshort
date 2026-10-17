@@ -229,29 +229,32 @@ holdshort forecast-check 2026-10-02..2026-10-08 --airport LTFM
 
 Which approaches were unusual? Each arrival's path from the 40 nm ring to touchdown is resampled
 at 32 points along the path, in its runway's frame (nm along and across the centreline, height in
-thousands of feet). Its score is the mean distance to the 5 nearest normal approaches to the same
-runway: the training days' approaches without a hold or go-around. Approaches above the
-validation week's 99th percentile are flagged, and the console shows each flagged approach with
-the nearest normal one dashed and the metrics that stand out (extra distance, time, turns, level
-time, height at 10 nm, speed at 4 nm, cross-track on final). The full report, with every flagged
-test approach drawn, is [research/ANOMALY.md](research/ANOMALY.md).
+thousands of feet). Its score is its distance to the nearest normal approach to the same runway
+(k = 1, chosen on the validation week), where normal means the training days' approaches without a
+hold or go-around. Approaches above the validation week's 99th percentile are flagged, and the
+console shows each flagged approach with the nearest normal one dashed and the metrics that stand
+out (extra distance, time, turns, level time, height at 10 nm, speed at 4 nm, cross-track on
+final). The full report, with every flagged test approach drawn, is
+[research/ANOMALY.md](research/ANOMALY.md).
 
 The detector never sees the twin's holds and go-arounds, so they serve as a check. On the test
-week (2–8 October, 3,050 approaches, 28 with a hold or go-around):
+week (2–8 October, 3,031 approaches, 28 with a hold or go-around):
 
 | Detector | Average precision | Recall in the top 1% |
 | --- | --- | --- |
-| kNN path distance (served) | 0.208 | 0.393 |
-| Robust z over the metrics | 0.069 | 0.000 |
-| Isolation forest on the metrics | 0.422 | 0.643 |
-| Landing-time residual (Research) | 0.496 | 0.643 |
+| kNN path distance (served) | 0.105 | 0.107 |
+| Robust z over the metrics | 0.071 | 0.000 |
+| Isolation forest on the metrics | 0.423 | 0.643 |
+| Landing-time residual (sub-project 4) | 0.496 | 0.643 |
 
 A random ranking scores about 0.009. The served detector was fixed before the test week and does
 **not** rank holds and go-arounds best: they are mostly long approaches, which the metric
-detectors measure directly. What it flags is different. Of its 22 test-week flags, 7 are
-go-arounds (one of them missed by the twin's rule), and 14 entered the ring from the north or
-north-east, an entry only 1.1% of normal approaches use. Those categories come from looking at
-each drawing; there is no ground truth for "unusual".
+detectors measure directly, and some go-arounds the twin's rule misses sit in the reference as
+"normal". What it flags is different. Of its 19 test-week flags, 4 are go-arounds (one of them
+missed by the twin's rule), and 13 entered the ring from the north or north-east, an entry only
+1.0% of normal approaches use. Those categories come from looking at each drawing; there is no
+ground truth for "unusual". A coverage bug found in review after the first test run was fixed and
+lowered the kNN numbers (first run: AP 0.208 with k = 5); the report gives both.
 
 How it fits together: `crates/twin/src/approach.rs` builds the rows (`holdshort features` writes
 them), `research/holdshort_research/approach.py` fits, compares, calibrates and exports the
