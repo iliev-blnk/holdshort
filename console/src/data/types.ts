@@ -36,11 +36,32 @@ export interface FlightJ {
   p: [number, number];
   /** Landing time predicted at the 40 nm ring, seconds after entry (null without a prediction). */
   eta_s: number | null;
+  /** Approach anomaly score (arrivals exported with models). */
+  ap: ApJ | null;
+  /** The nearest normal approach as [lon, lat] points (flagged approaches only). */
+  ap_ref: [number, number][] | null;
+}
+
+/** A metric far from normal: its value and the typical value. */
+export interface ReasonJ {
+  m: string;
+  v: number;
+  typ: number;
+}
+
+export interface ApJ {
+  /** Percentile among normal approaches to the same runway; null when not scored. */
+  pct: number | null;
+  /** In the top 1%. */
+  flag: boolean;
+  reasons: ReasonJ[];
+  /** Why there is no score: lost_on_final, no_entry, runway or coverage. */
+  unscored: string | null;
 }
 
 export interface EventJ {
   t: number;
-  kind: 'asma_entry' | 'go_around' | 'hold_start' | 'hold_end' | 'touchdown' | 'liftoff' | 'config_change';
+  kind: 'asma_entry' | 'go_around' | 'hold_start' | 'hold_end' | 'touchdown' | 'liftoff' | 'config_change' | 'unusual_approach';
   /** Index into flights; null for configuration changes. */
   f: number | null;
   rwy: string | null;

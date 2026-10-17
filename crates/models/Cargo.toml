@@ -5,6 +5,7 @@ license.workspace = true
 version.workspace = true
 
 [dependencies]
+holdshort-core.workspace = true
 holdshort-twin.workspace = true
 serde.workspace = true
 serde_json.workspace = true

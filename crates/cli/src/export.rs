@@ -19,6 +19,8 @@ use serde::{Deserialize, Serialize};
 use crate::store::Store;
 use crate::twin::compute_day;
 use holdshort_models::EtaModel;
+use holdshort_models::approach::{ApproachModel, ApproachScore};
+use holdshort_twin::approach::{ApproachRow, approach_rows};
 use holdshort_twin::features::eta_rows;
 use holdshort_twin::height::Weather;
 
@@ -64,6 +66,28 @@ pub struct FlightJ {
     pub p: [u32; 2],
     /// Landing time predicted at the 40 nm ring, seconds after entry (with `--models`).
     pub eta_s: Option<i64>,
+    /// The approach anomaly score (arrivals, with `--models`).
+    pub ap: Option<ApJ>,
+    /// The nearest normal approach as `[lon, lat]` points (flagged approaches only).
+    pub ap_ref: Option<Vec<[f64; 2]>>,
+}
+
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
+pub struct ApJ {
+    /// Percentile among the validation week's approaches to the same runway, 1 decimal.
+    pub pct: Option<f64>,
+    pub flag: bool,
+    pub reasons: Vec<ReasonJ>,
+    /// Why the approach has no score ("lost_on_final", "no_entry", "runway", "coverage").
+    pub unscored: Option<String>,
+}
+
+/// A metric far from normal: its value and the typical (median) value, 1 decimal.
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
+pub struct ReasonJ {
+    pub m: String,
+    pub v: f32,
+    pub typ: f32,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
@@ -173,6 +197,8 @@ pub fn build(airport: &str, day: NaiveDate, twin: &DayTwin, obs: &[Obs]) -> (Day
             hold_s: f.holding_s.round() as i64,
             p: [first, tr.t.len() as u32 - first],
             eta_s: None,
+            ap: None,
+            ap_ref: None,
         });
     }
 
@@ -268,6 +294,74 @@ pub fn attach_eta(json: &mut DayJson, eta: &HashMap<String, f32>) {
     }
 }
 
+fn round1(v: f64) -> f64 {
+    (v * 10.0).round() / 10.0
+}
+
+/// Set each arrival's approach score from `rows` and their `scores` (same order), the
+/// nearest normal approach of flagged ones from `refs` (flight id → points), and add an
+/// `unusual_approach` event at each flagged touchdown.
+pub fn attach_approach(
+    json: &mut DayJson,
+    rows: &[ApproachRow],
+    scores: &[Option<ApproachScore>],
+    refs: &HashMap<String, Vec<[f64; 2]>>,
+) {
+    let index: HashMap<String, usize> = json
+        .flights
+        .iter()
+        .enumerate()
+        .map(|(i, f)| (f.id.clone(), i))
+        .collect();
+    let mut events = Vec::new();
+    for (row, score) in rows.iter().zip(scores) {
+        let Some(&i) = index.get(&row.flight_id) else {
+            continue;
+        };
+        let ap = match score {
+            Some(s) => ApJ {
+                pct: Some(round1(s.pct)),
+                flag: s.flag,
+                reasons: s
+                    .reasons
+                    .iter()
+                    .map(|r| ReasonJ {
+                        m: r.metric.into(),
+                        v: round1(r.value as f64) as f32,
+                        typ: round1(r.typical as f64) as f32,
+                    })
+                    .collect(),
+                unscored: None,
+            },
+            None => ApJ {
+                pct: None,
+                flag: false,
+                reasons: vec![],
+                unscored: Some(row.unscored.unwrap_or("runway").into()),
+            },
+        };
+        if ap.flag {
+            json.flights[i].ap_ref = refs.get(&row.flight_id).map(|pts| {
+                pts.iter()
+                    .map(|p| p.map(|v| (v * 1e5).round() / 1e5))
+                    .collect()
+            });
+            events.push(EventJ {
+                t: row.touchdown_ms - json.day_start_ms,
+                kind: "unusual_approach".into(),
+                f: Some(i as u32),
+                rwy: row.runway.clone(),
+                lat: None,
+                lon: None,
+                detail: None,
+            });
+        }
+        json.flights[i].ap = Some(ap);
+    }
+    json.events.extend(events);
+    json.events.sort_by_key(|e| e.t);
+}
+
 /// Write `<out>/<airport>/<date>/{day.json,tracks.bin.gz}`.
 pub fn write_day(
     out: &Path,
@@ -303,6 +397,23 @@ pub fn run_day(
         let pred = EtaModel::load(dir)?.predict(&x)?;
         let eta = rows.into_iter().map(|r| r.flight_id).zip(pred).collect();
         attach_eta(&mut json, &eta);
+
+        let model = ApproachModel::load(dir)?;
+        let rows = approach_rows(ap, &twin, &obs, &Weather::new(&metars));
+        let scores: Vec<_> = rows.iter().map(|r| model.score(r)).collect();
+        let mut refs = HashMap::new();
+        for (r, s) in rows.iter().zip(&scores) {
+            let (Some(s), Some(name)) = (s, r.runway.as_deref()) else {
+                continue;
+            };
+            if let (true, Some(end)) = (s.flag, ap.runways.iter().find(|e| e.name == name)) {
+                refs.insert(
+                    r.flight_id.clone(),
+                    model.nearest_path(end, name, s.nearest),
+                );
+            }
+        }
+        attach_approach(&mut json, &rows, &scores, &refs);
     }
     write_day(out, ap.icao, &day.to_string(), &json, &tracks)?;
     let points = (tracks.len() - HEADER) / 18;
@@ -410,6 +521,8 @@ mod tests {
     use super::*;
     use chrono::NaiveDate;
     use holdshort_core::{Obs, Src};
+    use holdshort_models::approach::Reason;
+    use holdshort_twin::approach::PATH_N;
     use holdshort_twin::classify::Kind;
     use holdshort_twin::config::Bin;
     use holdshort_twin::day::{DayTwin, Event, EventKind, Flight};
@@ -704,6 +817,120 @@ mod tests {
     }
 
     #[test]
+    fn export_without_models_has_no_ap() {
+        let (tw, o) = two_flights();
+        let (j, _) = build("LTFM", day(), &tw, &o);
+        assert!(
+            j.flights
+                .iter()
+                .all(|f| f.ap.is_none() && f.ap_ref.is_none())
+        );
+        let s = serde_json::to_string(&j).unwrap();
+        assert!(s.contains("\"ap\":null") && s.contains("\"ap_ref\":null"));
+    }
+
+    fn approach_row(id: &str, td: i64, unscored: Option<&'static str>) -> ApproachRow {
+        ApproachRow {
+            flight_id: id.into(),
+            touchdown_ms: td,
+            runway: Some("35R".into()),
+            unscored,
+            label_ga: false,
+            label_hold: false,
+            metrics: [0.0; 7],
+            path: [0.0; PATH_N],
+        }
+    }
+
+    fn approach_score(pct: f64, flag: bool) -> ApproachScore {
+        ApproachScore {
+            score: 1.0,
+            pct,
+            flag,
+            reasons: if flag {
+                vec![Reason {
+                    metric: "extra_nm",
+                    value: 18.43,
+                    typical: 4.06,
+                }]
+            } else {
+                vec![]
+            },
+            nearest: 0,
+        }
+    }
+
+    #[test]
+    fn attach_approach_flags_and_events() {
+        let at = |m: i64| START + 6 * 60 * MIN + m * MIN;
+        let mut fl = Vec::new();
+        for (i, id) in ["a-1", "b-1", "c-1"].iter().enumerate() {
+            let mut f = flight(id, "h", at(0), at(30), Kind::Arrival);
+            f.touchdown_ms = Some(at(10 * i as i64 + 10));
+            fl.push(f);
+        }
+        let evs = vec![
+            event(Some("a-1"), at(10), EventKind::Touchdown),
+            event(Some("b-1"), at(20), EventKind::Touchdown),
+            event(Some("c-1"), at(30), EventKind::Touchdown),
+        ];
+        let (mut j, _) = build("LTFM", day(), &twin(fl, evs, vec![]), &[]);
+        let rows = vec![
+            approach_row("a-1", at(10), None),
+            approach_row("b-1", at(20), None),
+            approach_row("c-1", at(30), Some("lost_on_final")),
+        ];
+        let scores = vec![
+            Some(approach_score(99.46, true)),
+            Some(approach_score(54.04, false)),
+            None,
+        ];
+        let refs = HashMap::from([("a-1".to_string(), vec![[28.123456789, 41.0]; 32])]);
+        attach_approach(&mut j, &rows, &scores, &refs);
+
+        let a = j.flights[0].ap.as_ref().unwrap();
+        assert_eq!(a.pct, Some(99.5));
+        assert!(a.flag);
+        assert_eq!(
+            a.reasons,
+            [ReasonJ {
+                m: "extra_nm".into(),
+                v: 18.4,
+                typ: 4.1
+            }]
+        );
+        let r = j.flights[0].ap_ref.as_ref().unwrap();
+        assert_eq!(r.len(), 32);
+        assert_eq!(r[0], [28.12346, 41.0]);
+
+        let b = j.flights[1].ap.as_ref().unwrap();
+        assert_eq!(
+            (b.pct, b.flag, b.unscored.as_deref()),
+            (Some(54.0), false, None)
+        );
+        assert!(j.flights[1].ap_ref.is_none());
+
+        let c = j.flights[2].ap.as_ref().unwrap();
+        assert_eq!(
+            (c.pct, c.unscored.as_deref()),
+            (None, Some("lost_on_final"))
+        );
+
+        let unusual: Vec<_> = j
+            .events
+            .iter()
+            .filter(|e| e.kind == "unusual_approach")
+            .collect();
+        assert_eq!(unusual.len(), 1);
+        assert_eq!(unusual[0].f, Some(0));
+        assert_eq!(unusual[0].t, at(10) - START);
+        assert_eq!(unusual[0].rwy.as_deref(), Some("35R"));
+        assert!(j.events.windows(2).all(|w| w[0].t <= w[1].t));
+        // Right after its touchdown.
+        assert_eq!(j.events[1].kind, "unusual_approach");
+    }
+
+    #[test]
     fn hist_counts_departures_without_runway() {
         let mut dep = flight("dep-1", "eee", START, START + 400 * MIN, Kind::Departure);
         dep.liftoff_ms = Some(START + 365 * MIN);
@@ -843,6 +1070,8 @@ mod tests {
                 hold_s: 0,
                 p: [0, 0],
                 eta_s: None,
+                ap: None,
+                ap_ref: None,
             })
             .collect();
         let j = DayJson {
@@ -906,7 +1135,41 @@ mod tests {
             "/../../console/test/fixture"
         ));
         let (tw, o) = fixture_day();
-        let (j, bin) = build("LTFM", day(), &tw, &o);
+        let (mut j, bin) = build("LTFM", day(), &tw, &o);
+        // THY1 is a flagged approach, with a straight nearest normal approach from 10 nm.
+        let thy = &tw.flights[0];
+        let rows = [approach_row(&thy.id, thy.touchdown_ms.unwrap(), None)];
+        let r = holdshort_core::airport::LTFM
+            .runways
+            .iter()
+            .find(|r| r.name == "35R")
+            .unwrap();
+        let path = (0..32)
+            .map(|i| {
+                let (lat, lon) = holdshort_twin::geo::from_runway(
+                    r,
+                    -1852.0 * (10.0 - i as f64 * 10.0 / 31.0),
+                    0.0,
+                );
+                [lon, lat]
+            })
+            .collect();
+        attach_approach(
+            &mut j,
+            &rows,
+            &[Some(ApproachScore {
+                score: 9.0,
+                pct: 99.7,
+                flag: true,
+                reasons: vec![Reason {
+                    metric: "extra_nm",
+                    value: 18.0,
+                    typical: 4.0,
+                }],
+                nearest: 0,
+            })],
+            &HashMap::from([(thy.id.clone(), path)]),
+        );
         let tmp = tempfile::tempdir().unwrap();
         write_day(tmp.path(), "LTFM", "2026-10-02", &j, &bin).unwrap();
         write_index(tmp.path(), "LTFM").unwrap();

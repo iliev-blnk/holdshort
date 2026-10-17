@@ -35,3 +35,8 @@ def load_hourly(data_dir: Path, airport: str = "LTFM") -> pl.DataFrame:
 def split(df: pl.DataFrame, part: str) -> pl.DataFrame:
     lo, hi = SPLIT[part]
     return df.filter(pl.col("date").is_between(pl.lit(lo), pl.lit(hi)))
+
+
+def load_approach(data_dir: Path, airport: str = "LTFM") -> pl.DataFrame:
+    """One row per arrival with a touchdown (see crates/twin/src/approach.rs)."""
+    return _tables(data_dir, airport, "approach")

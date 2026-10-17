@@ -1,4 +1,5 @@
 import type { FlightJ } from '../data/types';
+import { approachRow } from './approach';
 import { esc } from './feed';
 import { callsign, hhmm, minutes } from './format';
 
@@ -26,6 +27,7 @@ export function cardHtml(f: FlightJ): string {
     const signed = `${err < 0 ? '−' : '+'}${Math.abs(err).toFixed(1)} min`;
     rows.push(row('Predicted at 40 nm', `${hhmm(entry + f.eta_s * 1000)} UTC (${(f.eta_s / 60).toFixed(1)} min) · ${signed}`));
   }
+  if (f.ap) rows.push(row('Approach', approachRow(f.ap)));
   if (f.holds) rows.push(row('Holding', `${f.holds} × · ${minutes(f.hold_s)}`));
   if (f.ga) rows.push(row('Go-arounds', String(f.ga)));
   const sub = [f.type, f.reg].filter((x): x is string => !!x).map(esc).join(' · ') || '&nbsp;';

@@ -4,6 +4,8 @@
 //! This crate is native-only (ONNX Runtime is a C++ library); `core` and `twin` stay
 //! free of it so they keep building for WebAssembly.
 
+pub mod approach;
+
 use std::f64::consts::TAU;
 use std::path::Path;
 

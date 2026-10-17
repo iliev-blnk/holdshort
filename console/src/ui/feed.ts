@@ -2,7 +2,7 @@ import type { DayJson, EventJ } from '../data/types';
 import { T } from '../theme';
 import { eventText, hhmm } from './format';
 
-const DOT: Record<string, string> = { touchdown: T.arr, liftoff: T.dep, go_around: T.text, hold_start: T.muted, config_change: T.muted };
+const DOT: Record<string, string> = { touchdown: T.arr, liftoff: T.dep, go_around: T.text, hold_start: T.muted, config_change: T.muted, unusual_approach: T.anom };
 
 /** Escape text for innerHTML: callsigns, registrations and types come from third-party data. */
 const ENTITY: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };

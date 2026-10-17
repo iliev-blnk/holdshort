@@ -23,3 +23,16 @@ test('an early prediction shows a negative error', () => {
   const { day } = fixture();
   expect(cardHtml({ ...day.flights[0], eta_s: 852 })).toContain('−0.8 min');
 });
+
+test('a flagged approach shows on the card', () => {
+  const { day } = fixture();
+  const html = cardHtml(day.flights[0]);
+  expect(html).toContain('<dt>Approach</dt>');
+  expect(html).toContain('Unusual (top 1%) · +18 nm flown (typical +4)');
+});
+
+test('no approach row without a score', () => {
+  const { day } = fixture();
+  expect(cardHtml({ ...day.flights[0], ap: null })).not.toContain('Approach');
+  expect(cardHtml(day.flights[1])).not.toContain('Approach');
+});
