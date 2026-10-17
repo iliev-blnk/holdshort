@@ -13,6 +13,7 @@ export const T = {
   dep: '#ff9f43',
   ovf: '#6b7580',
   oth: '#4a535c',
+  anom: '#c792ea',
 } as const;
 
 export type Rgb = [number, number, number];

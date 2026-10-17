@@ -23,7 +23,7 @@ test('hhmm', () => {
 test('eventText for the fixture events', () => {
   const { day } = fixture();
   const texts = day.events.map((e) => eventText(e, day));
-  expect(texts).toEqual(['PGT2 departed', 'Config ARR 35R / DEP -', 'THY1 landed 35R']);
+  expect(texts).toEqual(['PGT2 departed', 'Config ARR 35R / DEP -', 'THY1 landed 35R', 'THY1 unusual approach 35R']);
 });
 
 test('eventText for go-arounds and holds', () => {

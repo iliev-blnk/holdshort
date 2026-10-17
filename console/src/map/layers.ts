@@ -1,4 +1,5 @@
 import type { Layer, PickingInfo } from '@deck.gl/core';
+import { PathStyleExtension } from '@deck.gl/extensions';
 import { IconLayer, LineLayer, PathLayer, ScatterplotLayer } from '@deck.gl/layers';
 import type { DayJson, EventJ, Tracks } from '../data/types';
 import { RUNWAYS, ring } from '../geo/ltfm';
@@ -106,6 +107,23 @@ export function buildLayers({ day, tracks, state, tMs, selected, onPick }: Layer
     }),
   ];
   if (selected !== null) {
+    const ref = day.flights[selected].ap_ref;
+    if (ref) {
+      // The nearest normal approach, dashed, under the flight's own path.
+      out.push(
+        new PathLayer({
+          id: 'nearest-normal',
+          data: [ref],
+          getPath: (d: [number, number][]) => d,
+          getColor: rgb(T.muted),
+          widthUnits: 'pixels',
+          getWidth: 2,
+          getDashArray: [6, 4],
+          dashJustified: true,
+          extensions: [new PathStyleExtension({ dash: true })],
+        }),
+      );
+    }
     out.push(
       new PathLayer({
         id: 'selected-path',

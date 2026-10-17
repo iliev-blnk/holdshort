@@ -31,6 +31,8 @@ export function eventText(e: EventJ, day: DayJson): string | null {
       return `${who} go-around${rwy}`;
     case 'hold_start':
       return `${who} holding`;
+    case 'unusual_approach':
+      return `${who} unusual approach${rwy}`;
     case 'config_change':
       return `Config ${e.detail || '—'}`;
     default:

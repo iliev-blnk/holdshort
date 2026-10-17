@@ -22,6 +22,11 @@ test('replays the fixture day', async ({ page }) => {
   await expect(page.locator('#card')).toContainText('35R');
   await expect(page).toHaveURL(/f=4bb208-1/);
 
+  // The flagged approach is in the feed and its card says why.
+  await page.locator('#panel .feed li', { hasText: 'THY1 unusual approach 35R' }).click();
+  await expect(page.locator('#card')).toContainText('Unusual (top 1%)');
+  await expect(page.locator('#card')).toContainText('+18 nm flown (typical +4)');
+
   expect(errors).toEqual([]);
 });
 
@@ -35,7 +40,7 @@ test('a day that fails to load leaves nothing of the previous day in the panel',
   });
   await page.goto('/?t=06:20');
   await page.keyboard.press('Space');
-  await expect(page.locator('#panel .feed li')).toHaveCount(3);
+  await expect(page.locator('#panel .feed li')).toHaveCount(4);
 
   await page.selectOption('#top select', '2026-10-03');
   await expect(page.locator('#notice')).toHaveText('This day could not be loaded.');
