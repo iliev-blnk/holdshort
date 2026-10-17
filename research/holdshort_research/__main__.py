@@ -13,7 +13,7 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
-from . import eta, hourly, model, report
+from . import approach, eta, hourly, model, report
 from .baselines import EtaBaselines
 from .data import SPLIT, load_eta, load_hourly, split
 from .metrics import summary
@@ -132,11 +132,14 @@ def run_all(data_dir: Path, out: Path, report_dir: Path) -> dict:
 
 def main() -> None:
     p = argparse.ArgumentParser(prog="holdshort_research")
-    p.add_argument("command", choices=["all"])
+    p.add_argument("command", choices=["all", "approach"])
     p.add_argument("--data", type=Path, default=Path("../data"))
     p.add_argument("--out", type=Path, default=Path("../models"))
     p.add_argument("--report", type=Path, default=Path("."))
     a = p.parse_args()
+    if a.command == "approach":
+        _print_approach(approach.run(a.data, a.out))
+        return
     res = run_all(a.data, a.out, a.report)
     t = res["eta"]["test"]
     print(f"landing time: model MAE {t['model']['mae'] / 60:.2f} min vs best baseline "
@@ -145,6 +148,14 @@ def main() -> None:
         s = v["test"]
         print(f"arrivals/hour h={h}: model MAE {s['model']['mae']:.2f} vs best baseline "
               f"{min(x['mae'] for k, x in s.items() if k != 'model'):.2f}")
+    _print_approach(approach.run(a.data, a.out))
+
+
+def _print_approach(res: dict) -> None:
+    t = res["test"]
+    print(f"approaches: k={res['k']}, {t['n']} test approaches, {t['n_labels']} labelled, {t['flagged']} flagged")
+    for d in approach.DETECTORS:
+        print(f"  {d:9s} AP {t[d]['ap']:.3f}  recall@1% {t[d]['recall_1pct']:.3f}")
 
 
 if __name__ == "__main__":
