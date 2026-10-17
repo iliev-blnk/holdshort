@@ -3,10 +3,12 @@
 use std::sync::Arc;
 
 use arrow::array::{
-    ArrayRef, Float32Array, Float64Array, Int64Array, StringArray, UInt8Array, UInt32Array,
+    ArrayRef, BooleanArray, Float32Array, Float64Array, Int64Array, StringArray, UInt8Array,
+    UInt32Array,
 };
 use chrono::NaiveDate;
 use holdshort_core::airport::Airport;
+use holdshort_twin::approach::{ApproachRow, METRICS, PATH_N, approach_rows};
 use holdshort_twin::features::{ETA_FEATURES, EtaRow, eta_rows, hourly_counts};
 use holdshort_twin::height::Weather;
 
@@ -59,6 +61,68 @@ fn eta_parquet(date: &str, rows: &[EtaRow]) -> anyhow::Result<Vec<u8>> {
     write(cols)
 }
 
+pub fn approach_parquet(date: &str, rows: &[ApproachRow]) -> anyhow::Result<Vec<u8>> {
+    let mut cols: Vec<(String, ArrayRef)> = vec![
+        (
+            "date".into(),
+            Arc::new(StringArray::from(vec![date; rows.len()])),
+        ),
+        (
+            "flight_id".into(),
+            Arc::new(
+                rows.iter()
+                    .map(|r| Some(r.flight_id.as_str()))
+                    .collect::<StringArray>(),
+            ),
+        ),
+        (
+            "touchdown_ms".into(),
+            Arc::new(rows.iter().map(|r| r.touchdown_ms).collect::<Int64Array>()),
+        ),
+        (
+            "runway".into(),
+            Arc::new(
+                rows.iter()
+                    .map(|r| r.runway.as_deref())
+                    .collect::<StringArray>(),
+            ),
+        ),
+        (
+            "unscored".into(),
+            Arc::new(rows.iter().map(|r| r.unscored).collect::<StringArray>()),
+        ),
+        (
+            "label_ga".into(),
+            Arc::new(
+                rows.iter()
+                    .map(|r| Some(r.label_ga))
+                    .collect::<BooleanArray>(),
+            ),
+        ),
+        (
+            "label_hold".into(),
+            Arc::new(
+                rows.iter()
+                    .map(|r| Some(r.label_hold))
+                    .collect::<BooleanArray>(),
+            ),
+        ),
+    ];
+    for (i, name) in METRICS.iter().enumerate() {
+        cols.push((
+            (*name).into(),
+            Arc::new(rows.iter().map(|r| r.metrics[i]).collect::<Float32Array>()),
+        ));
+    }
+    for i in 0..PATH_N {
+        cols.push((
+            format!("p{:02}{}", i / 3, ["x", "y", "h"][i % 3]),
+            Arc::new(rows.iter().map(|r| r.path[i]).collect::<Float32Array>()),
+        ));
+    }
+    write(cols.iter().map(|(n, a)| (n.as_str(), a.clone())).collect())
+}
+
 fn hourly_parquet(date: &str, counts: &[u32; 24]) -> anyhow::Result<Vec<u8>> {
     write(vec![
         (
@@ -81,7 +145,9 @@ pub fn run_day(store: &Store, ap: &'static Airport, day: NaiveDate) -> anyhow::R
         .expect("midnight")
         .and_utc()
         .timestamp_millis();
-    let rows = eta_rows(ap, &twin, &obs, &Weather::new(&metars));
+    let wx = Weather::new(&metars);
+    let rows = eta_rows(ap, &twin, &obs, &wx);
+    let approach = approach_rows(ap, &twin, &obs, &wx);
     let counts = hourly_counts(&twin, start);
     let date = day.to_string();
     let dir = format!("{}/features/date={date}", ap.icao);
@@ -90,9 +156,15 @@ pub fn run_day(store: &Store, ap: &'static Airport, day: NaiveDate) -> anyhow::R
         &format!("{dir}/hourly.parquet"),
         hourly_parquet(&date, &counts)?,
     )?;
+    store.put(
+        &format!("{dir}/approach.parquet"),
+        approach_parquet(&date, &approach)?,
+    )?;
     Ok(format!(
-        "{} eta rows, {} arrivals in 24 hours",
+        "{} eta rows, {} approach rows ({} scored), {} arrivals in 24 hours",
         rows.len(),
+        approach.len(),
+        approach.iter().filter(|r| r.unscored.is_none()).count(),
         counts.iter().sum::<u32>()
     ))
 }
@@ -170,7 +242,12 @@ pub(crate) mod tests {
             )
             .unwrap();
         let summary = run_day(&store, &LTFM, day()).unwrap();
-        assert_eq!(summary, "1 eta rows, 1 arrivals in 24 hours");
+        assert_eq!(
+            summary,
+            "1 eta rows, 1 approach rows (0 scored), 1 arrivals in 24 hours"
+        );
+        let ap = read(&store, "LTFM/features/date=2026-10-08/approach.parquet");
+        assert_eq!(ap.num_rows(), 1);
 
         let eta = read(&store, "LTFM/features/date=2026-10-08/eta.parquet");
         assert_eq!(eta.num_rows(), 1);
@@ -209,5 +286,65 @@ pub(crate) mod tests {
         assert_eq!(arrivals.value(1), 1);
         assert_eq!(arrivals.iter().flatten().sum::<u32>(), 1);
         assert_eq!(hourly.column_by_name("date").unwrap().len(), 24);
+    }
+
+    #[test]
+    fn approach_parquet_columns() {
+        use holdshort_twin::approach::{ApproachRow, METRICS, PATH_N};
+        let scored = ApproachRow {
+            flight_id: "f1".into(),
+            touchdown_ms: 5,
+            runway: Some("35R".into()),
+            unscored: None,
+            label_ga: true,
+            label_hold: false,
+            metrics: [1.5; 7],
+            path: std::array::from_fn(|i| i as f32),
+        };
+        let unscored = ApproachRow {
+            flight_id: "f2".into(),
+            runway: None,
+            unscored: Some("runway"),
+            label_ga: false,
+            metrics: [f32::NAN; 7],
+            path: [f32::NAN; PATH_N],
+            ..scored.clone()
+        };
+        let bytes = approach_parquet("2026-10-08", &[scored, unscored]).unwrap();
+        let store = Store::memory();
+        store.put("a.parquet", bytes).unwrap();
+        let b = read(&store, "a.parquet");
+        let names: Vec<String> = b
+            .schema()
+            .fields()
+            .iter()
+            .map(|f| f.name().clone())
+            .collect();
+        assert_eq!(
+            &names[..7],
+            [
+                "date",
+                "flight_id",
+                "touchdown_ms",
+                "runway",
+                "unscored",
+                "label_ga",
+                "label_hold"
+            ]
+        );
+        assert_eq!(&names[7..14], METRICS);
+        assert_eq!(names[14], "p00x");
+        assert_eq!(names[16], "p00h");
+        assert_eq!(names[14 + PATH_N - 1], "p31h");
+        assert_eq!(names.len(), 14 + PATH_N);
+        let un = b.column(4).as_string::<i32>();
+        assert!(un.is_null(0));
+        assert_eq!(un.value(1), "runway");
+        assert!(b.column(5).as_boolean().value(0));
+        let p31h = b
+            .column(14 + PATH_N - 1)
+            .as_primitive::<arrow::datatypes::Float32Type>();
+        assert_eq!(p31h.value(0), (PATH_N - 1) as f32);
+        assert!(p31h.value(1).is_nan());
     }
 }
