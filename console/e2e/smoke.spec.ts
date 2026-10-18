@@ -48,3 +48,27 @@ test('a day that fails to load leaves nothing of the previous day in the panel',
   await expect(page.locator('#panel .config')).toHaveText('—');
   await expect(page.locator('#panel .s-hour')).toHaveText('0');
 });
+
+test('writeup_loads', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto('/writeup.html');
+  await expect(page.locator('#writeup h1')).toContainText('holdshort');
+  const hero = page.locator('#writeup img').first();
+  await expect.poll(() => hero.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth)).toBeGreaterThan(0);
+  expect(errors).toEqual([]);
+});
+
+test('topbar_links_to_writeup', async ({ page }) => {
+  await page.goto('/?t=06:05');
+  await page.locator('#top a', { hasText: 'Write-up' }).click();
+  await expect(page).toHaveURL(/writeup/);
+  await expect(page.locator('#writeup h1')).toBeVisible();
+});
+
+test('writeup_has_no_horizontal_page_scroll_on_phone', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/writeup.html');
+  await expect(page.locator('#writeup h1')).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+});

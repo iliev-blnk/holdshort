@@ -19,6 +19,7 @@ export function mountTopbar(el: HTMLElement, index: DayIndex, current: string, o
     <select class="day" aria-label="Day">
       ${index.days.map((d) => `<option value="${d.date}">${shortDate(d.date)}</option>`).join('')}
     </select>
+    <a class="gh" href="writeup.html">Write-up</a>
     <a class="gh" href="${REPO}" target="_blank" rel="noopener">GitHub</a>`;
   const caption = el.querySelector<HTMLSpanElement>('.caption')!;
   const select = el.querySelector<HTMLSelectElement>('.day')!;
