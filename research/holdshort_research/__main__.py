@@ -13,7 +13,7 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
-from . import approach, approach_report, eta, hourly, model, report
+from . import approach, approach_report, eta, writeup_figures, hourly, model, report
 from .baselines import EtaBaselines
 from .data import SPLIT, load_eta, load_hourly, split
 from .metrics import summary
@@ -132,11 +132,16 @@ def run_all(data_dir: Path, out: Path, report_dir: Path) -> dict:
 
 def main() -> None:
     p = argparse.ArgumentParser(prog="holdshort_research")
-    p.add_argument("command", choices=["all", "approach"])
+    p.add_argument("command", choices=["all", "approach", "writeup-figures"])
     p.add_argument("--data", type=Path, default=Path("../data"))
     p.add_argument("--out", type=Path, default=Path("../models"))
     p.add_argument("--report", type=Path, default=Path("."))
+    p.add_argument("--repo", type=Path, default=Path(".."))
     a = p.parse_args()
+    if a.command == "writeup-figures":
+        for path in writeup_figures.run(a.data, a.repo):
+            print(path)
+        return
     if a.command == "approach":
         _approach(a)
         return
