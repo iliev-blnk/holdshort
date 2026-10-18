@@ -3,7 +3,7 @@
 A digital twin of airport airspace, built from open ADS-B data. The main airport is Istanbul
 (LTFM, ~1,500 flights a day); Suceava (LRSV) is a second, smaller one.
 
-This repository holds sub-projects 1–5 of 6. **Ingest** builds a dataset of every aircraft
+This repository holds all six sub-projects. **Ingest** builds a dataset of every aircraft
 position within 50 nm of each airport. Complete days come from the adsb.lol daily archive, and a live
 poller adds same-day data. Each day is compacted to Parquet alongside METAR weather. The **twin**
 turns those positions into flights and airport events: arrivals and departures with their runway
@@ -14,6 +14,9 @@ compares every approach with the normal approaches to its runway and flags the m
 
 **[Live console: holdshort.pages.dev](https://holdshort.pages.dev)**, a replay of any of the
 10 days with every aircraft, runway and go-around.
+
+**[Technical write-up](https://holdshort.pages.dev/writeup)** ([source](docs/WRITEUP.md)): how it
+works, the results, and where it fell short.
 
 ## How it works
 
@@ -288,7 +291,8 @@ holdshort export 2026-09-29..2026-10-08 --airport LTFM --models models
    data; taxi times are out of reach because there is no ground coverage.
 5. **Anomaly detection** (done): kNN on resampled approach paths against normal approaches per
    runway, checked against holds and go-arounds and three baselines, flagged approaches in the console
-6. Technical write-up
+6. **Technical write-up** (done): [docs/WRITEUP.md](docs/WRITEUP.md), also served at
+   [holdshort.pages.dev/writeup](https://holdshort.pages.dev/writeup)
 
 ## License
 
