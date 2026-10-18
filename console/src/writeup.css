@@ -106,20 +106,34 @@ body {
   transform: translateX(-50%);
 }
 
-/* A paragraph that is only emphasis, right under an image, is its caption. */
+/* A paragraph that is only emphasis is a caption. */
+#writeup p:has(> em:only-child) {
+  font-size: 14px;
+  line-height: 1.5;
+}
 #writeup p > em:only-child {
   color: var(--muted);
   font-style: normal;
-  font-size: 14px;
 }
 
 #writeup-footer {
   margin-top: 64px;
   padding-bottom: 48px;
   color: var(--muted);
+}
+
+#writeup-footer p {
   font-size: 14px;
 }
 
 #writeup-footer a {
   color: var(--muted);
+}
+
+/* On narrow screens the hero's empty sides are cropped, so the circle fills the width. */
+@media (max-width: 640px) {
+  #writeup img:not([loading]) {
+    aspect-ratio: 1;
+    object-fit: cover;
+  }
 }
