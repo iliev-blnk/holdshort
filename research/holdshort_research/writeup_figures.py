@@ -7,12 +7,9 @@ accumulates into its own density grid, and the grids are added in their console 
 import shutil
 from pathlib import Path
 
-import matplotlib
-
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402
-import numpy as np  # noqa: E402
-import polars as pl  # noqa: E402
+import numpy as np
+import polars as pl
+from PIL import Image
 
 LTFM = (41.2753, 28.7519)  # the reference point in crates/core/src/airport.rs
 RADIUS_NM = 50.0
@@ -106,8 +103,9 @@ def run(data_dir: Path, repo: Path, date: str = "2026-10-02") -> list[Path]:
     obs = pl.read_parquet(Path(data_dir, "LTFM", "parquet", f"date={date}", "obs.parquet"), columns=["ts_ms", "hex", "lat", "lon"])
     flights = pl.read_parquet(Path(data_dir, "LTFM", "twin", f"date={date}", "flights.parquet"), columns=["hex", "kind", "first_ms", "last_ms"])
     img = render_day(flight_kinds(obs, flights), LTFM, RADIUS_NM, SIZE)
-    day = out / "day.png"
-    plt.imsave(day, img)
+    # WebP keeps the hero light (a PNG of this many thin lines is ~1.7 MB).
+    day = out / "day.webp"
+    Image.fromarray((img * 255).round().astype(np.uint8)).save(day, "WEBP", quality=85, method=6)
     paths = [day]
     for src, name in COPIES:
         shutil.copyfile(Path(repo) / src, out / name)

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { expect, test } from 'vitest';
 import { slug } from '../src/writeup/render';
@@ -39,4 +39,15 @@ test('has_the_sections', () => {
     'What I would do differently',
     'Engineering notes',
   ]);
+});
+
+test('code_lines_fit_the_column', () => {
+  for (const block of md.matchAll(/```[^\n]*\n([\s\S]*?)```/g)) {
+    for (const line of block[1].split('\n')) expect(line.length, line).toBeLessThanOrEqual(88);
+  }
+});
+
+test('hero_is_light', () => {
+  const hero = /!\[[^\]]*\]\(([^)]+)\)/.exec(md)![1];
+  expect(statSync(resolve(docs, hero)).size).toBeLessThan(600_000);
 });
